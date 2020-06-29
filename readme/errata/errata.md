@@ -5,6 +5,15 @@
 
 13.1.1 kubectl의 config 파일에 있는 **TLS** 인증 정보 구조 확인하기
 
+## 97쪽 3.2.1 명령
+`kubectl run nginx-app --image nginx --port=80`
+
+→
+
+`kubectl  create  deployment nginx-app --image nginx`
+
+단, 쿠버네티스 1.18 이후 사용자만 해당 정오표를 반영하기 바랍니다.
+
 ### 259쪽 10.2 제목 아래 문단
 
 [코드 10-2]는 컨피그맵의 일부 설정만 불러오는 디플로이먼트와 **NodePoret** 타입 서비스가 포함된 템플릿의 예입니다.
