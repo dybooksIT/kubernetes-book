@@ -32,7 +32,7 @@ Rules:
             /tea      tea-svc:80 (<none>)
             /coffee   coffee-svc:80 (<none>)
 Annotations:
-  kubectl.kubernetes.io/last-applied-configuration:  {"apiVersion":"extensions/v1beta1","kind":"Ingress","metadata":{"annotations":{},"name":"cafe-ingress","namespace":"default","selfLink":"/apis/networking/v1beta1/namespaces/default/ingresses/cafe-ingress"},"spec":{"rules":[{"host":"cafe.com","http":{"paths":[{"backend":{"serviceName":"tea-svc","servicePort":80},"path":"/tea"},{"backend":{"serviceName":"coffee-svc","servicePort":80},"path":"/coffee"}]}}]},"status":{"loadBalancer":{"ingress":[{"ip":"169.48.142.110"}]}}}
+  kubectl.kubernetes.io/last-applied-configuration:  {"apiVersion":"networking.k8s.io/v1beta1","kind":"Ingress","metadata":{"annotations":{},"name":"cafe-ingress","namespace":"default","selfLink":"/apis/networking/v1beta1/namespaces/default/ingresses/cafe-ingress"},"spec":{"rules":[{"host":"cafe.com","http":{"paths":[{"backend":{"serviceName":"tea-svc","servicePort":80},"path":"/tea"},{"backend":{"serviceName":"coffee-svc","servicePort":80},"path":"/coffee"}]}}]},"status":{"loadBalancer":{"ingress":[{"ip":"169.48.142.110"}]}}}
 
 Events:
   Type    Reason  Age   From                      Message
@@ -65,12 +65,12 @@ $ kubectl get pods -n <namespace-of-ingress-controller>
 NAME                                        READY     STATUS    RESTARTS   AGE
 nginx-ingress-controller-67956bf89d-fv58j   1/1       Running   0          1m
 
-$ kubectl exec -it -n <namespace-of-ingress-controller> nginx-ingress-controller-67956bf89d-fv58j cat /etc/nginx/nginx.conf
+$ kubectl exec -it -n <namespace-of-ingress-controller> nginx-ingress-controller-67956bf89d-fv58j -- cat /etc/nginx/nginx.conf
 daemon off;
 worker_processes 2;
 pid /run/nginx.pid;
 worker_rlimit_nofile 523264;
-worker_shutdown_timeout 10s;
+worker_shutdown_timeout 240s;
 events {
 	multi_accept        on;
 	worker_connections  16384;
@@ -165,7 +165,7 @@ Kubernetes                                                  Workstation
 
 ### Service Account
 
-If using a service account to connect to the API server, Dashboard expects the file
+If using a service account to connect to the API server, the ingress-controller expects the file
 `/var/run/secrets/kubernetes.io/serviceaccount/token` to be present. It provides a secret
 token that is required to authenticate with the API server.
 
@@ -181,7 +181,7 @@ NAME                   READY     STATUS    RESTARTS   AGE
 test-701078429-s5kca   1/1       Running   0          16s
 
 # check if secret exists
-$ kubectl exec test-701078429-s5kca ls /var/run/secrets/kubernetes.io/serviceaccount/
+$ kubectl exec test-701078429-s5kca -- ls /var/run/secrets/kubernetes.io/serviceaccount/
 ca.crt
 namespace
 token

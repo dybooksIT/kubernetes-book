@@ -1,6 +1,15 @@
-local string_len = string.len
-local string_sub = string.sub
+local ngx           = ngx
+local string        = string
+local string_len    = string.len
 local string_format = string.format
+local pairs         = pairs
+local ipairs        = ipairs
+local tonumber      = tonumber
+local getmetatable  = getmetatable
+local type          = type
+local next          = next
+local table         = table
+local re_gmatch     = ngx.re.gmatch
 
 local _M = {}
 
@@ -16,20 +25,62 @@ function _M.get_nodes(endpoints)
   return nodes
 end
 
--- given an Nginx variable i.e $request_uri
--- it returns value of ngx.var[request_uri]
-function _M.lua_ngx_var(ngx_var)
-  local var_name = string_sub(ngx_var, 2)
-  if var_name:match("^%d+$") then
-    var_name = tonumber(var_name)
+-- parse the compound variables, then call generate_var_value function
+-- to parse into a string value.
+function _M.parse_complex_value(complex_value)
+    local reg = [[ (\\\$[0-9a-zA-Z_]+) | ]]     -- \$var
+            .. [[ \$\{([0-9a-zA-Z_]+)\} | ]]    -- ${var}
+            .. [[ \$([0-9a-zA-Z_]+) | ]]        -- $var
+            .. [[ (\$|[^$\\]+) ]]               -- $ or text value
+    local iterator, err = re_gmatch(complex_value, reg, "jiox")
+    if not iterator then
+        return nil, err
+    end
+
+    local v
+    local t = {}
+    while true do
+        v, err = iterator()
+        if err then
+            return nil, err
+        end
+
+        if not v then
+            break
+        end
+
+        table.insert(t, v)
+    end
+
+    return t
+end
+
+-- Parse the return value of function parse_complex_value
+-- into a string value
+function _M.generate_var_value(data)
+  if data == nil then
+    return ""
   end
 
-  return ngx.var[var_name]
+  local t = {}
+  for _, value in ipairs(data) do
+    local var_name = value[2] or value[3]
+    if var_name then
+      if var_name:match("^%d+$") then
+        var_name = tonumber(var_name)
+      end
+      table.insert(t, ngx.var[var_name])
+    else
+      table.insert(t, value[1] or value[4])
+    end
+  end
+
+  return table.concat(t, "")
 end
 
 -- normalize_endpoints takes endpoints as an array of endpoint objects
--- and returns a table where keys are string that's endpoint.address .. ":" .. endpoint.port
--- and values are all true
+-- and returns a table where keys are string that's
+-- endpoint.address .. ":" .. endpoint.port and values are all true
 local function normalize_endpoints(endpoints)
   local normalized_endpoints = {}
 
@@ -48,7 +99,8 @@ end
 -- Both return values are normalized (ip:port).
 function _M.diff_endpoints(old, new)
   local endpoints_added, endpoints_removed = {}, {}
-  local normalized_old, normalized_new = normalize_endpoints(old), normalize_endpoints(new)
+  local normalized_old = normalize_endpoints(old)
+  local normalized_new = normalize_endpoints(new)
 
   for endpoint_string, _ in pairs(normalized_old) do
     if not normalized_new[endpoint_string] then
@@ -66,7 +118,8 @@ function _M.diff_endpoints(old, new)
 end
 
 -- this implementation is taken from
--- https://web.archive.org/web/20131225070434/http://snippets.luacode.org/snippets/Deep_Comparison_of_Two_Values_3
+-- https://web.archive.org/web/20131225070434/http://snippets.
+-- luacode.org/snippets/Deep_Comparison_of_Two_Values_3
 -- and modified for use in this project
 local function deep_compare(t1, t2, ignore_mt)
   local ty1 = type(t1)
@@ -120,7 +173,8 @@ local function tablelength(T)
 end
 _M.tablelength = tablelength
 
--- replaces special character value a with value b for all occurences in a string
+-- replaces special character value a with value b for all occurrences in a
+-- string
 local function replace_special_char(str, a, b)
   return string.gsub(str, "%" .. a, b)
 end

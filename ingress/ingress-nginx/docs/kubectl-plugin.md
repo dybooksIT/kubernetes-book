@@ -11,17 +11,21 @@ Do not move it without providing redirects.
 ## Installation
 
 Install [krew](https://github.com/GoogleContainerTools/krew), then run
+
 ```console
-$ kubectl krew install ingress-nginx
+kubectl krew install ingress-nginx
 ```
+
 to install the plugin. Then run
+
 ```console
-$ kubectl ingress-nginx --help
+kubectl ingress-nginx --help
 ```
+
 to make sure the plugin is properly installed and to get a list of commands:
 
 ```console
-$ kubectl ingress-nginx --help
+kubectl ingress-nginx --help
 A kubectl plugin for inspecting your ingress-nginx deployments
 
 Usage:
@@ -61,24 +65,11 @@ Flags:
 Use "ingress-nginx [command] --help" for more information about a command.
 ```
 
-If a new `ingress-nginx` version has just been released, the plugin may not yet have been updated inside the repository. In that case, you can install the latest version of the plugin by running:
-
-```console
-(
-    set -x; cd "$(mktemp -d)" &&
-    curl -fsSLO "https://github.com/kubernetes/ingress-nginx/releases/download/nginx-0.24.0/{ingress-nginx.yaml,kubectl-ingress_nginx-$(uname | tr '[:upper:]' '[:lower:]')-amd64.tar.gz}" &&
-    kubectl krew install \
-    --manifest=ingress-nginx.yaml --archive=kubectl-ingress_nginx-$(uname | tr '[:upper:]' '[:lower:]')-amd64.tar.gz
-)
-```
-
-Replacing `0.24.0` with the recently released version.
-
 ## Common Flags
 
- - Every subcommand supports the basic `kubectl` configuration flags like `--namespace`, `--context`, `--client-key` and so on.
- - Subcommands that act on a particular `ingress-nginx` pod (`backends`, `certs`, `conf`, `exec`, `general`, `logs`, `ssh`), support the `--deployment <deployment>` and `--pod <pod>` flags to select either a pod from a deployment with the given name, or a pod with the given name. The `--deployment` flag defaults to `nginx-ingress-controller`.
- - Subcommands that inspect resources (`ingresses`, `lint`) support the `--all-namespaces` flag, which causes them to inspect resources in every namespace.
+- Every subcommand supports the basic `kubectl` configuration flags like `--namespace`, `--context`, `--client-key` and so on.
+- Subcommands that act on a particular `ingress-nginx` pod (`backends`, `certs`, `conf`, `exec`, `general`, `logs`, `ssh`), support the `--deployment <deployment>` and `--pod <pod>` flags to select either a pod from a deployment with the given name, or a pod with the given name. The `--deployment` flag defaults to `nginx-ingress-controller`.
+- Subcommands that inspect resources (`ingresses`, `lint`) support the `--all-namespaces` flag, which causes them to inspect resources in every namespace.
 
 ## Subcommands
 
@@ -117,11 +108,6 @@ $ kubectl ingress-nginx backends -n ingress-nginx
       }
     },
     "port": 0,
-    "secureCACert": {
-      "secret": "",
-      "caFilename": "",
-      "caSha": ""
-    },
     "sslPassthrough": false,
     "endpoints": [
       {
@@ -161,10 +147,12 @@ Add the `--list` option to show only the backend names. Add the `--backend <back
 
 ### certs
 
-Use `kubectl ingress-nginx certs --host <hostname>` to dump the SSL cert/key information for a given host. Requires that `--enable-dynamic-certificates` is `true` (this is the default as of version `0.24.0`). WARNING: This command will dump sensitive private key information. Don't blindly share the output, and certainly don't log it anywhere.
+Use `kubectl ingress-nginx certs --host <hostname>` to dump the SSL cert/key information for a given host.
+
+**WARNING:** This command will dump sensitive private key information. Don't blindly share the output, and certainly don't log it anywhere.
 
 ```console
-$ kubectl ingress-nginx certs --host testaddr.local -n ingress-nginx
+$ kubectl ingress-nginx certs -n ingress-nginx --host testaddr.local
 -----BEGIN CERTIFICATE-----
 ...
 -----END CERTIFICATE-----
@@ -182,7 +170,7 @@ $ kubectl ingress-nginx certs --host testaddr.local -n ingress-nginx
 Use `kubectl ingress-nginx conf` to dump the generated `nginx.conf` file. Add the `--host <hostname>` option to view only the server block for that host:
 
 ```console
-$ kubectl ingress-nginx conf -n ingress-nginx --host testaddr.local
+kubectl ingress-nginx conf -n ingress-nginx --host testaddr.local
 
 	server {
 		server_name testaddr.local ;
@@ -212,39 +200,16 @@ $ kubectl ingress-nginx conf -n ingress-nginx --host testaddr.local
 
 ```console
 $ kubectl ingress-nginx exec -i -n ingress-nginx -- ls /etc/nginx
-fastcgi.conf
-fastcgi.conf.default
 fastcgi_params
-fastcgi_params.default
 geoip
-koi-utf
-koi-win
 lua
 mime.types
-mime.types.default
 modsecurity
 modules
 nginx.conf
-nginx.conf.default
 opentracing.json
 owasp-modsecurity-crs
-scgi_params
-scgi_params.default
 template
-uwsgi_params
-uwsgi_params.default
-win-utf
-```
-
-### general
-
-`kubectl ingress-nginx general` dumps miscellaneous controller state as a JSON object. Currently it just shows the number of controller pods known to a particular controller pod.
-
-```console
-$ kubectl ingress-nginx general
-{
-  "controllerPodsCount": 1
-}
 ```
 
 ### info

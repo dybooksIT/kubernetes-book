@@ -12,90 +12,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+.DEFAULT_GOAL:=build
+
+# set default shell
+SHELL=/bin/bash -o pipefail -o errexit
+
+DIR:=$(strip $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST)))))
+INIT_BUILDX=$(DIR)/../../hack/init-buildx.sh
+
 # 0.0.0 shouldn't clobber any released builds
-TAG ?= 0.92
-REGISTRY ?= quay.io/kubernetes-ingress-controller
-ARCH ?= $(shell go env GOARCH)
-DOCKER ?= docker
+TAG ?= 0.0
+REGISTRY ?= gcr.io/k8s-staging-ingress-nginx
 
-ALL_ARCH = amd64 arm arm64
-SED_I?=sed -i
-GOHOSTOS ?= $(shell go env GOHOSTOS)
+IMAGE = $(REGISTRY)/nginx
 
-ifeq ($(GOHOSTOS),darwin)
-  SED_I=sed -i ''
-endif
+# required to enable buildx
+export DOCKER_CLI_EXPERIMENTAL=enabled
 
-QEMUVERSION=v4.0.0-2
+# build with buildx
+PLATFORMS?=linux/amd64,linux/arm,linux/arm64,linux/s390x
+OUTPUT=
+PROGRESS=plain
+build: ensure-buildx
+	docker buildx build \
+		--platform=${PLATFORMS} $(OUTPUT) \
+		--progress=$(PROGRESS) \
+		--pull \
+		--tag $(IMAGE):$(TAG) rootfs
 
-IMGNAME = nginx
-IMAGE = $(REGISTRY)/$(IMGNAME)
-MULTI_ARCH_IMG = $(IMAGE)-$(ARCH)
+# push the cross built image
+push: OUTPUT=--push
+push: build
 
-# Set default base image dynamically for each arch
-BASEIMAGE?=quay.io/kubernetes-ingress-controller/debian-base-$(ARCH):0.1
-
-ifeq ($(ARCH),arm)
-	QEMUARCH=arm
-endif
-ifeq ($(ARCH),arm64)
-	QEMUARCH=aarch64
-endif
-
-TEMP_DIR := $(shell mktemp -d)
-
-all: all-container
-
-image-info:
-	echo -n '{"image":"$(IMAGE)","tag":"$(TAG)"}'
-
-sub-container-%:
-	$(MAKE) ARCH=$* container
-
-sub-push-%:
-	$(MAKE) ARCH=$* push
-
-all-container: $(addprefix sub-container-,$(ALL_ARCH))
-
-all-push: $(addprefix sub-push-,$(ALL_ARCH))
-
-container: .container-$(ARCH)
-.container-$(ARCH):
-	cp -r ./rootfs/* $(TEMP_DIR)
-	cd $(TEMP_DIR) && $(SED_I) 's|BASEIMAGE|$(BASEIMAGE)|g' Dockerfile
-	cd $(TEMP_DIR) && $(SED_I) "s|ARCH|$(QEMUARCH)|g" Dockerfile
-
-ifeq ($(ARCH),amd64)
-	# When building "normally" for amd64, remove the whole line, it has no part in the amd64 image
-	cd $(TEMP_DIR) && $(SED_I) "/CROSS_BUILD_/d" Dockerfile
+# enable buildx
+ensure-buildx:
+# this is required for cloudbuild
+ifeq ("$(wildcard $(INIT_BUILDX))","")
+	@curl -sSL https://raw.githubusercontent.com/kubernetes/ingress-nginx/master/hack/init-buildx.sh | bash
 else
-	# When cross-building, only the placeholder "CROSS_BUILD_" should be removed
-	curl -sSL https://github.com/multiarch/qemu-user-static/releases/download/$(QEMUVERSION)/x86_64_qemu-$(QEMUARCH)-static.tar.gz | tar -xz -C $(TEMP_DIR)
-	cd $(TEMP_DIR) && $(SED_I) "s/CROSS_BUILD_//g" Dockerfile
+	@exec $(INIT_BUILDX)
 endif
+	@echo "done"
 
-	$(DOCKER) build --no-cache -t $(MULTI_ARCH_IMG):$(TAG) $(TEMP_DIR)
-
-ifeq ($(ARCH), amd64)
-	# This is for to maintain the backward compatibility
-	$(DOCKER) tag $(MULTI_ARCH_IMG):$(TAG) $(IMAGE):$(TAG)
-endif
-
-.PHONY: register-qemu
-register-qemu:
-	# Register /usr/bin/qemu-ARCH-static as the handler for binaries in multiple platforms
-	$(DOCKER) run --rm --privileged multiarch/qemu-user-static:register --reset
-
-push: .push-$(ARCH)
-.push-$(ARCH): .container-$(ARCH)
-	$(DOCKER) push $(MULTI_ARCH_IMG):$(TAG)
-ifeq ($(ARCH), amd64)
-	$(DOCKER) push $(IMAGE):$(TAG)
-endif
-
-clean: $(addprefix sub-clean-,$(ALL_ARCH))
-sub-clean-%:
-	$(DOCKER) rmi -f $(IMAGE)-$*:$(TAG) || true
-
-release: all-container all-push
-	echo "done"
+.PHONY: build push ensure-buildx

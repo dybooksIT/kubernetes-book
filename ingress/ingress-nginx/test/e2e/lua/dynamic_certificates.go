@@ -17,36 +17,37 @@ limitations under the License.
 package lua
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-
+	"github.com/onsi/ginkgo"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
-	extensions "k8s.io/api/extensions/v1beta1"
+	"github.com/stretchr/testify/assert"
+	networking "k8s.io/api/networking/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/ingress-nginx/test/e2e/framework"
 )
 
-var _ = framework.IngressNginxDescribe("Dynamic Certificate", func() {
+var _ = framework.IngressNginxDescribe("[Lua] dynamic certificates", func() {
 	f := framework.NewDefaultFramework("dynamic-certificate")
 	host := "foo.com"
 
-	BeforeEach(func() {
-		f.NewEchoDeploymentWithReplicas(1)
+	ginkgo.BeforeEach(func() {
+		f.NewEchoDeployment()
 	})
 
-	It("picks up the certificate when we add TLS spec to existing ingress", func() {
-		ensureIngress(f, host, "http-svc")
+	ginkgo.It("picks up the certificate when we add TLS spec to existing ingress", func() {
+		ensureIngress(f, host, framework.EchoService)
 
-		ing, err := f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Get(host, metav1.GetOptions{})
-		Expect(err).ToNot(HaveOccurred())
-		ing.Spec.TLS = []extensions.IngressTLS{
+		ing, err := f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Get(context.TODO(), host, metav1.GetOptions{})
+		assert.Nil(ginkgo.GinkgoT(), err)
+		ing.Spec.TLS = []networking.IngressTLS{
 			{
 				Hosts:      []string{host},
 				SecretName: host,
@@ -56,73 +57,75 @@ var _ = framework.IngressNginxDescribe("Dynamic Certificate", func() {
 			ing.Spec.TLS[0].Hosts,
 			ing.Spec.TLS[0].SecretName,
 			ing.Namespace)
-		Expect(err).ToNot(HaveOccurred())
-		_, err = f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Update(ing)
-		Expect(err).ToNot(HaveOccurred())
+		assert.Nil(ginkgo.GinkgoT(), err)
+
+		_, err = f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Update(context.TODO(), ing, metav1.UpdateOptions{})
+		assert.Nil(ginkgo.GinkgoT(), err)
+
 		time.Sleep(waitForLuaSync)
 
-		ensureHTTPSRequest(f.GetURL(framework.HTTPS), host, host)
+		ensureHTTPSRequest(f, f.GetURL(framework.HTTPS), host, host)
 	})
 
-	It("picks up the previously missing secret for a given ingress without reloading", func() {
-		ing := framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, f.Namespace, "http-svc", 80, nil)
+	ginkgo.It("picks up the previously missing secret for a given ingress without reloading", func() {
+		ing := framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, f.Namespace, framework.EchoService, 80, nil)
 		f.EnsureIngress(ing)
 
 		time.Sleep(waitForLuaSync)
 
 		ip := f.GetNginxPodIP()
-		mf, err := f.GetMetric("nginx_ingress_controller_success", ip[0])
-		Expect(err).ToNot(HaveOccurred())
-		Expect(mf).ToNot(BeNil())
+		mf, err := f.GetMetric("nginx_ingress_controller_success", ip)
+		assert.Nil(ginkgo.GinkgoT(), err)
+		assert.NotNil(ginkgo.GinkgoT(), mf)
 
 		rc0, err := extractReloadCount(mf)
-		Expect(err).ToNot(HaveOccurred())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
-		ensureHTTPSRequest(fmt.Sprintf("%s?id=dummy_log_splitter_foo_bar", f.GetURL(framework.HTTPS)), host, "ingress.local")
+		ensureHTTPSRequest(f, fmt.Sprintf("%s?id=dummy_log_splitter_foo_bar", f.GetURL(framework.HTTPS)), host, "ingress.local")
 
 		_, err = framework.CreateIngressTLSSecret(f.KubeClientSet,
 			ing.Spec.TLS[0].Hosts,
 			ing.Spec.TLS[0].SecretName,
 			ing.Namespace)
-		Expect(err).ToNot(HaveOccurred())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
 		time.Sleep(waitForLuaSync)
 
-		By("serving the configured certificate on HTTPS endpoint")
-		ensureHTTPSRequest(f.GetURL(framework.HTTPS), host, host)
+		ginkgo.By("serving the configured certificate on HTTPS endpoint")
+		ensureHTTPSRequest(f, f.GetURL(framework.HTTPS), host, host)
 
 		log, err := f.NginxLogs()
-		Expect(err).ToNot(HaveOccurred())
-		Expect(log).ToNot(BeEmpty())
+		assert.Nil(ginkgo.GinkgoT(), err)
+		assert.NotEmpty(ginkgo.GinkgoT(), log)
 
-		By("skipping Nginx reload")
-		mf, err = f.GetMetric("nginx_ingress_controller_success", ip[0])
-		Expect(err).ToNot(HaveOccurred())
-		Expect(mf).ToNot(BeNil())
+		ginkgo.By("skipping Nginx reload")
+		mf, err = f.GetMetric("nginx_ingress_controller_success", ip)
+		assert.Nil(ginkgo.GinkgoT(), err)
+		assert.NotNil(ginkgo.GinkgoT(), mf)
 
 		rc1, err := extractReloadCount(mf)
-		Expect(err).ToNot(HaveOccurred())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
-		// TODO: This is wrong. We should not require a reload when SSL is configured
-		Expect(rc0).To(BeEquivalentTo(rc1 - 1))
+		assert.Equal(ginkgo.GinkgoT(), rc0, rc1)
 	})
 
-	Context("given an ingress with TLS correctly configured", func() {
-		BeforeEach(func() {
-			ing := f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, f.Namespace, "http-svc", 80, nil))
+	ginkgo.Context("given an ingress with TLS correctly configured", func() {
+		ginkgo.BeforeEach(func() {
+			ing := f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, f.Namespace, framework.EchoService, 80, nil))
 
 			time.Sleep(waitForLuaSync)
 
-			ensureHTTPSRequest(f.GetURL(framework.HTTPS), host, "ingress.local")
+			ensureHTTPSRequest(f, f.GetURL(framework.HTTPS), host, "ingress.local")
 
 			_, err := framework.CreateIngressTLSSecret(f.KubeClientSet,
 				ing.Spec.TLS[0].Hosts,
 				ing.Spec.TLS[0].SecretName,
 				ing.Namespace)
-			Expect(err).ToNot(HaveOccurred())
+			assert.Nil(ginkgo.GinkgoT(), err)
+
 			time.Sleep(waitForLuaSync)
 
-			By("configuring certificate_by_lua and skipping Nginx configuration of the new certificate")
+			ginkgo.By("configuring certificate_by_lua and skipping Nginx configuration of the new certificate")
 			f.WaitForNginxServer(ing.Spec.TLS[0].Hosts[0],
 				func(server string) bool {
 					return strings.Contains(server, "listen 443")
@@ -130,8 +133,8 @@ var _ = framework.IngressNginxDescribe("Dynamic Certificate", func() {
 
 			time.Sleep(waitForLuaSync)
 
-			By("serving the configured certificate on HTTPS endpoint")
-			ensureHTTPSRequest(f.GetURL(framework.HTTPS), host, host)
+			ginkgo.By("serving the configured certificate on HTTPS endpoint")
+			ensureHTTPSRequest(f, f.GetURL(framework.HTTPS), host, host)
 		})
 
 		/*
@@ -139,102 +142,110 @@ var _ = framework.IngressNginxDescribe("Dynamic Certificate", func() {
 			because Go transport code strips (https://github.com/golang/go/blob/431b5c69ca214ce4291f008c1ce2a50b22bc2d2d/src/crypto/tls/handshake_messages.go#L424)
 			trailing dot from SNI as suggest by the standard (https://tools.ietf.org/html/rfc6066#section-3).
 		*/
-		It("supports requests with domain with trailing dot", func() {
-			ensureHTTPSRequest(f.GetURL(framework.HTTPS), host+".", host)
+		ginkgo.It("supports requests with domain with trailing dot", func() {
+			ensureHTTPSRequest(f, f.GetURL(framework.HTTPS), host+".", host)
 		})
 
-		It("picks up the updated certificate without reloading", func() {
-			ing, err := f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Get(host, metav1.GetOptions{})
-			Expect(err).ToNot(HaveOccurred())
+		ginkgo.It("picks up the updated certificate without reloading", func() {
+			ing, err := f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Get(context.TODO(), host, metav1.GetOptions{})
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-			ensureHTTPSRequest(fmt.Sprintf("%s?id=dummy_log_splitter_foo_bar", f.GetURL(framework.HTTPS)), host, host)
+			ensureHTTPSRequest(f, fmt.Sprintf("%s?id=dummy_log_splitter_foo_bar", f.GetURL(framework.HTTPS)), host, host)
 
 			_, err = framework.CreateIngressTLSSecret(f.KubeClientSet,
 				ing.Spec.TLS[0].Hosts,
 				ing.Spec.TLS[0].SecretName,
 				ing.Namespace)
-			Expect(err).ToNot(HaveOccurred())
+			assert.Nil(ginkgo.GinkgoT(), err)
 
 			time.Sleep(waitForLuaSync)
 
-			By("configuring certificate_by_lua and skipping Nginx configuration of the new certificate")
+			ginkgo.By("configuring certificate_by_lua and skipping Nginx configuration of the new certificate")
 			f.WaitForNginxServer(ing.Spec.TLS[0].Hosts[0],
 				func(server string) bool {
 					return strings.Contains(server, "listen 443")
 				})
 
-			By("serving the configured certificate on HTTPS endpoint")
-			ensureHTTPSRequest(f.GetURL(framework.HTTPS), host, host)
+			ginkgo.By("serving the configured certificate on HTTPS endpoint")
+			ensureHTTPSRequest(f, f.GetURL(framework.HTTPS), host, host)
 
 			log, err := f.NginxLogs()
-			Expect(err).ToNot(HaveOccurred())
-			Expect(log).ToNot(BeEmpty())
+			assert.Nil(ginkgo.GinkgoT(), err)
+			assert.NotEmpty(ginkgo.GinkgoT(), log)
+
 			index := strings.Index(log, "id=dummy_log_splitter_foo_bar")
+			assert.GreaterOrEqual(ginkgo.GinkgoT(), index, 0, "log does not contains id=dummy_log_splitter_foo_bar")
 			restOfLogs := log[index:]
 
-			By("skipping Nginx reload")
-			Expect(restOfLogs).ToNot(ContainSubstring(logRequireBackendReload))
-			Expect(restOfLogs).ToNot(ContainSubstring(logBackendReloadSuccess))
+			ginkgo.By("skipping Nginx reload")
+			assert.NotContains(ginkgo.GinkgoT(), restOfLogs, logRequireBackendReload)
+			assert.NotContains(ginkgo.GinkgoT(), restOfLogs, logBackendReloadSuccess)
 		})
 
-		// TODO: Fix
-		/*
-			It("falls back to using default certificate when secret gets deleted without reloading", func() {
-				ing, err := f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Get(host, metav1.GetOptions{})
+		ginkgo.It("falls back to using default certificate when secret gets deleted without reloading", func() {
+			ing, err := f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Get(context.TODO(), host, metav1.GetOptions{})
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-				ensureHTTPSRequest(fmt.Sprintf("%s?id=dummy_log_splitter_foo_bar", f.GetURL(framework.HTTPS)), host, host)
+			ensureHTTPSRequest(f, fmt.Sprintf("%s?id=dummy_log_splitter_foo_bar", f.GetURL(framework.HTTPS)), host, host)
 
-				ip := f.GetNginxPodIP()
-				mf, err := f.GetMetric("nginx_ingress_controller_success", ip[0])
-				Expect(err).ToNot(HaveOccurred())
-				Expect(mf).ToNot(BeNil())
+			ip := f.GetNginxPodIP()
+			mf, err := f.GetMetric("nginx_ingress_controller_success", ip)
+			assert.Nil(ginkgo.GinkgoT(), err)
+			assert.NotNil(ginkgo.GinkgoT(), mf)
 
-				rc0, err := extractReloadCount(mf)
-				Expect(err).ToNot(HaveOccurred())
+			rc0, err := extractReloadCount(mf)
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-				err = f.KubeClientSet.CoreV1().Secrets(ing.Namespace).Delete(ing.Spec.TLS[0].SecretName, nil)
-				Expect(err).ToNot(HaveOccurred())
+			err = f.KubeClientSet.CoreV1().Secrets(ing.Namespace).Delete(context.TODO(), ing.Spec.TLS[0].SecretName, metav1.DeleteOptions{})
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-				time.Sleep(waitForLuaSync * 2)
+			time.Sleep(waitForLuaSync)
 
-				By("serving the default certificate on HTTPS endpoint")
-				ensureHTTPSRequest(f.GetURL(framework.HTTPS), host, "ingress.local")
+			ginkgo.By("serving the default certificate on HTTPS endpoint")
+			ensureHTTPSRequest(f, f.GetURL(framework.HTTPS), host, "ingress.local")
 
-				mf, err = f.GetMetric("nginx_ingress_controller_success", ip[0])
-				Expect(err).ToNot(HaveOccurred())
-				Expect(mf).ToNot(BeNil())
+			mf, err = f.GetMetric("nginx_ingress_controller_success", ip)
+			assert.Nil(ginkgo.GinkgoT(), err)
+			assert.NotNil(ginkgo.GinkgoT(), mf)
 
-				rc1, err := extractReloadCount(mf)
-				Expect(err).ToNot(HaveOccurred())
+			rc1, err := extractReloadCount(mf)
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-				By("skipping Nginx reload")
-				// TODO: This is wrong. We should not require a reload when SSL is configured
-				Expect(rc0).To(BeEquivalentTo(rc1 - 1))
-			})
-		*/
+			ginkgo.By("skipping Nginx reload")
+			assert.Equal(ginkgo.GinkgoT(), rc0, rc1)
+		})
 
-		It("picks up a non-certificate only change", func() {
+		ginkgo.It("picks up a non-certificate only change", func() {
 			newHost := "foo2.com"
-			ing, err := f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Get(host, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred())
+			ing, err := f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Get(context.TODO(), host, metav1.GetOptions{})
+			assert.Nil(ginkgo.GinkgoT(), err)
+
 			ing.Spec.Rules[0].Host = newHost
-			_, err = f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Update(ing)
-			Expect(err).ToNot(HaveOccurred())
+			_, err = f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Update(context.TODO(), ing, metav1.UpdateOptions{})
+			assert.Nil(ginkgo.GinkgoT(), err)
+
 			time.Sleep(waitForLuaSync)
 
-			By("serving the configured certificate on HTTPS endpoint")
-			ensureHTTPSRequest(f.GetURL(framework.HTTPS), newHost, "ingress.local")
+			ginkgo.By("serving the configured certificate on HTTPS endpoint")
+			ensureHTTPSRequest(f, f.GetURL(framework.HTTPS), newHost, "ingress.local")
 		})
 
-		It("removes HTTPS configuration when we delete TLS spec", func() {
-			ing, err := f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Get(host, metav1.GetOptions{})
-			Expect(err).NotTo(HaveOccurred())
-			ing.Spec.TLS = []extensions.IngressTLS{}
-			_, err = f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Update(ing)
-			Expect(err).ToNot(HaveOccurred())
+		ginkgo.It("removes HTTPS configuration when we delete TLS spec", func() {
+			ing, err := f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Get(context.TODO(), host, metav1.GetOptions{})
+			assert.Nil(ginkgo.GinkgoT(), err)
+
+			ing.Spec.TLS = []networking.IngressTLS{}
+			_, err = f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Update(context.TODO(), ing, metav1.UpdateOptions{})
+			assert.Nil(ginkgo.GinkgoT(), err)
+
 			time.Sleep(waitForLuaSync)
 
-			ensureRequest(f, host)
+			f.HTTPTestClient().
+				GET("/").
+				WithHeader("Host", host).
+				Expect().
+				Status(http.StatusOK)
+
 		})
 	})
 })

@@ -5,10 +5,20 @@ local dns_lookup = require("util.dns").lookup
 local configuration = require("tcp_udp_configuration")
 local round_robin = require("balancer.round_robin")
 
+local ngx = ngx
+local table = table
+local ipairs = ipairs
+local pairs = pairs
+local tostring = tostring
+local string = string
+local getmetatable = getmetatable
+
 -- measured in seconds
 -- for an Nginx worker to pick up the new list of upstream peers
--- it will take <the delay until controller POSTed the backend object to the Nginx endpoint> + BACKENDS_SYNC_INTERVAL
+-- it will take <the delay until controller POSTed the backend object
+-- to the Nginx endpoint> + BACKENDS_SYNC_INTERVAL
 local BACKENDS_SYNC_INTERVAL = 1
+local BACKENDS_FORCE_SYNC_INTERVAL = 30
 
 local DEFAULT_LB_ALG = "round_robin"
 local IMPLEMENTATIONS = {
@@ -17,13 +27,16 @@ local IMPLEMENTATIONS = {
 
 local _M = {}
 local balancers = {}
+local backends_with_external_name = {}
+local backends_last_synced_at = 0
 
 local function get_implementation(backend)
   local name = backend["load-balance"] or DEFAULT_LB_ALG
 
   local implementation = IMPLEMENTATIONS[name]
   if not implementation then
-    ngx.log(ngx.WARN, string.format("%s is not supported, falling back to %s", backend["load-balance"], DEFAULT_LB_ALG))
+    ngx.log(ngx.WARN, string.format("%s is not supported, falling back to %s",
+      backend["load-balance"], DEFAULT_LB_ALG))
     implementation = IMPLEMENTATIONS[DEFAULT_LB_ALG]
   end
 
@@ -55,13 +68,18 @@ local function format_ipv6_endpoints(endpoints)
   return formatted_endpoints
 end
 
+local function is_backend_with_external_name(backend)
+  local serv_type = backend.service and backend.service.spec
+                      and backend.service.spec["type"]
+  return serv_type == "ExternalName"
+end
+
 local function sync_backend(backend)
   if not backend.endpoints or #backend.endpoints == 0 then
-    ngx.log(ngx.INFO, string.format("there is no endpoint for backend %s. Skipping...", backend.name))
     return
   end
 
-  ngx.log(ngx.INFO, string.format("backend ", backend.name))
+  ngx.log(ngx.INFO, "sync tcp/udp backend: ", backend.name)
   local implementation = get_implementation(backend)
   local balancer = balancers[backend.name]
 
@@ -74,16 +92,13 @@ local function sync_backend(backend)
   -- here we check if `balancer` is the instance of `implementation`
   -- if it is not then we deduce LB algorithm has changed for the backend
   if getmetatable(balancer) ~= implementation then
-    ngx.log(
-      ngx.INFO,
-      string.format("LB algorithm changed from %s to %s, resetting the instance", balancer.name, implementation.name)
-    )
+    ngx.log(ngx.INFO, string.format("LB algorithm changed from %s to %s, "
+      .. "resetting the instance", balancer.name, implementation.name))
     balancers[backend.name] = implementation:new(backend)
     return
   end
 
-  local service_type = backend.service and backend.service.spec and backend.service.spec["type"]
-  if service_type == "ExternalName" then
+  if is_backend_with_external_name(backend) then
     backend = resolve_external_names(backend)
   end
 
@@ -93,6 +108,17 @@ local function sync_backend(backend)
 end
 
 local function sync_backends()
+  local raw_backends_last_synced_at = configuration.get_raw_backends_last_synced_at()
+  ngx.update_time()
+  local current_timestamp = ngx.time()
+  if current_timestamp - backends_last_synced_at < BACKENDS_FORCE_SYNC_INTERVAL
+      and raw_backends_last_synced_at <= backends_last_synced_at then
+    for _, backend_with_external_name in pairs(backends_with_external_name) do
+      sync_backend(backend_with_external_name)
+    end
+    return
+  end
+
   local backends_data = configuration.get_backends_data()
   if not backends_data then
     balancers = {}
@@ -109,13 +135,19 @@ local function sync_backends()
   for _, new_backend in ipairs(new_backends) do
     sync_backend(new_backend)
     balancers_to_keep[new_backend.name] = balancers[new_backend.name]
+    if is_backend_with_external_name(new_backend) then
+      local backend_with_external_name = util.deepcopy(new_backend)
+      backends_with_external_name[backend_with_external_name.name] = backend_with_external_name
+    end
   end
 
   for backend_name, _ in pairs(balancers) do
     if not balancers_to_keep[backend_name] then
       balancers[backend_name] = nil
+      backends_with_external_name[backend_name] = nil
     end
   end
+  backends_last_synced_at = raw_backends_last_synced_at
 end
 
 local function get_balancer()
@@ -132,7 +164,8 @@ function _M.init_worker()
   sync_backends() -- when worker starts, sync backends without delay
   local _, err = ngx.timer.every(BACKENDS_SYNC_INTERVAL, sync_backends)
   if err then
-    ngx.log(ngx.ERR, string.format("error when setting up timer.every for sync_backends: %s", tostring(err)))
+    ngx.log(ngx.ERR, string.format("error when setting up timer.every "
+      .. "for sync_backends: %s", tostring(err)))
   end
 end
 
@@ -169,9 +202,9 @@ function _M.log()
   balancer:after_balance()
 end
 
-if _TEST then
-  _M.get_implementation = get_implementation
-  _M.sync_backend = sync_backend
-end
+setmetatable(_M, {__index = {
+  get_implementation = get_implementation,
+  sync_backend = sync_backend,
+}})
 
 return _M

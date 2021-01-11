@@ -17,33 +17,38 @@ limitations under the License.
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"math/rand"
+	"math/rand" // #nosec
 	"net/http"
 	"net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	discovery "k8s.io/apimachinery/pkg/version"
 	"k8s.io/apiserver/pkg/server/healthz"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/klog"
+	certutil "k8s.io/client-go/util/cert"
+	"k8s.io/klog/v2"
 
 	"k8s.io/ingress-nginx/internal/file"
+	"k8s.io/ingress-nginx/internal/ingress/annotations/class"
 	"k8s.io/ingress-nginx/internal/ingress/controller"
 	"k8s.io/ingress-nginx/internal/ingress/metric"
 	"k8s.io/ingress-nginx/internal/k8s"
 	"k8s.io/ingress-nginx/internal/net/ssl"
+	"k8s.io/ingress-nginx/internal/nginx"
 	"k8s.io/ingress-nginx/version"
 )
 
@@ -68,43 +73,75 @@ func main() {
 		klog.Fatal(err)
 	}
 
-	kubeClient, err := createApiserverClient(conf.APIServerHost, conf.KubeConfigFile)
+	kubeClient, err := createApiserverClient(conf.APIServerHost, conf.RootCAFile, conf.KubeConfigFile)
 	if err != nil {
 		handleFatalInitError(err)
 	}
 
 	if len(conf.DefaultService) > 0 {
-		defSvcNs, defSvcName, err := k8s.ParseNameNS(conf.DefaultService)
+		err := checkService(conf.DefaultService, kubeClient)
 		if err != nil {
 			klog.Fatal(err)
 		}
 
-		_, err = kubeClient.CoreV1().Services(defSvcNs).Get(defSvcName, metav1.GetOptions{})
+		klog.InfoS("Valid default backend", "service", conf.DefaultService)
+	}
+
+	if len(conf.PublishService) > 0 {
+		err := checkService(conf.PublishService, kubeClient)
 		if err != nil {
-			if errors.IsUnauthorized(err) || errors.IsForbidden(err) {
-				klog.Fatal("✖ The cluster seems to be running with a restrictive Authorization mode and the Ingress controller does not have the required permissions to operate normally.")
-			}
-			klog.Fatalf("No service with name %v found: %v", conf.DefaultService, err)
+			klog.Fatal(err)
 		}
-		klog.Infof("Validated %v as the default backend.", conf.DefaultService)
 	}
 
 	if conf.Namespace != "" {
-		_, err = kubeClient.CoreV1().Namespaces().Get(conf.Namespace, metav1.GetOptions{})
+		_, err = kubeClient.CoreV1().Namespaces().Get(context.TODO(), conf.Namespace, metav1.GetOptions{})
 		if err != nil {
 			klog.Fatalf("No namespace with name %v found: %v", conf.Namespace, err)
 		}
 	}
 
 	conf.FakeCertificate = ssl.GetFakeSSLCert()
-	klog.Infof("SSL fake certificate created %v", conf.FakeCertificate.PemFileName)
+	klog.InfoS("SSL fake certificate created", "file", conf.FakeCertificate.PemFileName)
 
-	k8s.IsNetworkingIngressAvailable = k8s.NetworkingIngressAvailable(kubeClient)
-	if !k8s.IsNetworkingIngressAvailable {
-		klog.Warningf("Using deprecated \"k8s.io/api/extensions/v1beta1\" package because Kubernetes version is < v1.14.0")
+	var isNetworkingIngressAvailable bool
+
+	isNetworkingIngressAvailable, k8s.IsIngressV1Beta1Ready, _ = k8s.NetworkingIngressAvailable(kubeClient)
+	if !isNetworkingIngressAvailable {
+		klog.Fatalf("ingress-nginx requires Kubernetes v1.14.0 or higher")
+	}
+
+	if k8s.IsIngressV1Beta1Ready {
+		klog.InfoS("Enabling new Ingress features available since Kubernetes v1.18")
+		k8s.IngressClass, err = kubeClient.NetworkingV1beta1().IngressClasses().
+			Get(context.TODO(), class.IngressClass, metav1.GetOptions{})
+		if err != nil {
+			if !errors.IsNotFound(err) {
+				if !errors.IsUnauthorized(err) && !errors.IsForbidden(err) {
+					klog.Fatalf("Error searching IngressClass: %v", err)
+				}
+
+				klog.ErrorS(err, "Searching IngressClass", "class", class.IngressClass)
+			}
+
+			klog.Warningf("No IngressClass resource with name %v found. Only annotation will be used.", class.IngressClass)
+
+			// TODO: remove once this is fixed in client-go
+			k8s.IngressClass = nil
+		}
+
+		if k8s.IngressClass != nil && k8s.IngressClass.Spec.Controller != k8s.IngressNGINXController {
+			klog.Errorf(`Invalid IngressClass (Spec.Controller) value "%v". Should be "%v"`, k8s.IngressClass.Spec.Controller, k8s.IngressNGINXController)
+			klog.Fatalf("IngressClass with name %v is not valid for ingress-nginx (invalid Spec.Controller)", class.IngressClass)
+		}
 	}
 
 	conf.Client = kubeClient
+
+	err = k8s.GetIngressPod(kubeClient)
+	if err != nil {
+		klog.Fatalf("Unexpected error obtaining ingress-nginx pod: %v", err)
+	}
 
 	reg := prometheus.NewRegistry()
 
@@ -123,24 +160,22 @@ func main() {
 	}
 	mc.Start()
 
-	ngx := controller.NewNGINXController(conf, mc)
-	go handleSigterm(ngx, func(code int) {
-		os.Exit(code)
-	})
-
-	mux := http.NewServeMux()
-
 	if conf.EnableProfiling {
-		registerProfiler(mux)
+		go registerProfiler()
 	}
 
-	registerHealthz(ngx, mux)
+	ngx := controller.NewNGINXController(conf, mc)
+
+	mux := http.NewServeMux()
+	registerHealthz(nginx.HealthPath, ngx, mux)
 	registerMetrics(reg, mux)
-	registerHandlers(mux)
 
 	go startHTTPServer(conf.ListenPorts.Health, mux)
+	go ngx.Start()
 
-	ngx.Start()
+	handleSigterm(ngx, func(code int) {
+		os.Exit(code)
+	})
 }
 
 type exiter func(code int)
@@ -149,18 +184,18 @@ func handleSigterm(ngx *controller.NGINXController, exit exiter) {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGTERM)
 	<-signalChan
-	klog.Info("Received SIGTERM, shutting down")
+	klog.InfoS("Received SIGTERM, shutting down")
 
 	exitCode := 0
 	if err := ngx.Stop(); err != nil {
-		klog.Infof("Error during shutdown: %v", err)
+		klog.Warningf("Error during shutdown: %v", err)
 		exitCode = 1
 	}
 
-	klog.Info("Handled quit, awaiting Pod deletion")
+	klog.InfoS("Handled quit, awaiting Pod deletion")
 	time.Sleep(10 * time.Second)
 
-	klog.Infof("Exiting with %v", exitCode)
+	klog.InfoS("Exiting", "code", exitCode)
 	exit(exitCode)
 }
 
@@ -172,13 +207,38 @@ func handleSigterm(ngx *controller.NGINXController, exit exiter) {
 // If neither apiserverHost nor kubeConfig is passed in, we assume the
 // controller runs inside Kubernetes and fallback to the in-cluster config. If
 // the in-cluster config is missing or fails, we fallback to the default config.
-func createApiserverClient(apiserverHost, kubeConfig string) (*kubernetes.Clientset, error) {
+func createApiserverClient(apiserverHost, rootCAFile, kubeConfig string) (*kubernetes.Clientset, error) {
 	cfg, err := clientcmd.BuildConfigFromFlags(apiserverHost, kubeConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	klog.Infof("Creating API client for %s", cfg.Host)
+	// TODO: remove after k8s v1.22
+	cfg.WarningHandler = rest.NoWarnings{}
+
+	// Configure the User-Agent used for the HTTP requests made to the API server.
+	cfg.UserAgent = fmt.Sprintf(
+		"%s/%s (%s/%s) ingress-nginx/%s",
+		filepath.Base(os.Args[0]),
+		version.RELEASE,
+		runtime.GOOS,
+		runtime.GOARCH,
+		version.COMMIT,
+	)
+
+	if apiserverHost != "" && rootCAFile != "" {
+		tlsClientConfig := rest.TLSClientConfig{}
+
+		if _, err := certutil.NewPool(rootCAFile); err != nil {
+			klog.ErrorS(err, "Loading CA config", "file", rootCAFile)
+		} else {
+			tlsClientConfig.CAFile = rootCAFile
+		}
+
+		cfg.TLSClientConfig = tlsClientConfig
+	}
+
+	klog.InfoS("Creating API client", "host", cfg.Host)
 
 	client, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -198,7 +258,7 @@ func createApiserverClient(apiserverHost, kubeConfig string) (*kubernetes.Client
 
 	var lastErr error
 	retries := 0
-	klog.V(2).Info("Trying to discover Kubernetes version")
+	klog.V(2).InfoS("Trying to discover Kubernetes version")
 	err = wait.ExponentialBackoff(defaultRetry, func() (bool, error) {
 		v, err = client.Discovery().ServerVersion()
 
@@ -207,7 +267,7 @@ func createApiserverClient(apiserverHost, kubeConfig string) (*kubernetes.Client
 		}
 
 		lastErr = err
-		klog.V(2).Infof("Unexpected error discovering Kubernetes version (attempt %v): %v", retries, err)
+		klog.V(2).ErrorS(err, "Unexpected error discovering Kubernetes version", "attempt", retries)
 		retries++
 		return false, nil
 	})
@@ -222,8 +282,14 @@ func createApiserverClient(apiserverHost, kubeConfig string) (*kubernetes.Client
 		klog.Warningf("Initial connection to the Kubernetes API server was retried %d times.", retries)
 	}
 
-	klog.Infof("Running in Kubernetes cluster version v%v.%v (%v) - git (%v) commit %v - platform %v",
-		v.Major, v.Minor, v.GitVersion, v.GitTreeState, v.GitCommit, v.Platform)
+	klog.InfoS("Running in Kubernetes cluster",
+		"major", v.Major,
+		"minor", v.Minor,
+		"git", v.GitVersion,
+		"state", v.GitTreeState,
+		"commit", v.GitCommit,
+		"platform", v.Platform,
+	)
 
 	return client, nil
 }
@@ -238,17 +304,10 @@ func handleFatalInitError(err error) {
 		err)
 }
 
-func registerHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("/build", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		b, _ := json.Marshal(version.String())
-		w.Write(b)
-	})
-}
-
-func registerHealthz(ic *controller.NGINXController, mux *http.ServeMux) {
+func registerHealthz(healthPath string, ic *controller.NGINXController, mux *http.ServeMux) {
 	// expose health check endpoint (/healthz)
-	healthz.InstallHandler(mux,
+	healthz.InstallPathHandler(mux,
+		healthPath,
 		healthz.PingHealthz,
 		ic,
 	)
@@ -262,10 +321,11 @@ func registerMetrics(reg *prometheus.Registry, mux *http.ServeMux) {
 			promhttp.HandlerFor(reg, promhttp.HandlerOpts{}),
 		),
 	)
-
 }
 
-func registerProfiler(mux *http.ServeMux) {
+func registerProfiler() {
+	mux := http.NewServeMux()
+
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/heap", pprof.Index)
 	mux.HandleFunc("/debug/pprof/mutex", pprof.Index)
@@ -276,6 +336,12 @@ func registerProfiler(mux *http.ServeMux) {
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf("127.0.0.1:%v", nginx.ProfilerPort),
+		Handler: mux,
+	}
+	klog.Fatal(server.ListenAndServe())
 }
 
 func startHTTPServer(port int, mux *http.ServeMux) {
@@ -288,4 +354,26 @@ func startHTTPServer(port int, mux *http.ServeMux) {
 		IdleTimeout:       120 * time.Second,
 	}
 	klog.Fatal(server.ListenAndServe())
+}
+
+func checkService(key string, kubeClient *kubernetes.Clientset) error {
+	ns, name, err := k8s.ParseNameNS(key)
+	if err != nil {
+		return err
+	}
+
+	_, err = kubeClient.CoreV1().Services(ns).Get(context.TODO(), name, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsUnauthorized(err) || errors.IsForbidden(err) {
+			return fmt.Errorf("✖ the cluster seems to be running with a restrictive Authorization mode and the Ingress controller does not have the required permissions to operate normally")
+		}
+
+		if errors.IsNotFound(err) {
+			return fmt.Errorf("No service with name %v found in namespace %v: %v", name, ns, err)
+		}
+
+		return fmt.Errorf("Unexpected error searching service with name %v in namespace %v: %v", name, ns, err)
+	}
+
+	return nil
 }

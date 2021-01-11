@@ -1,4 +1,4 @@
-_G._TEST = true
+local cjson = require("cjson.safe")
 
 local original_ngx = ngx
 local function reset_ngx()
@@ -30,9 +30,21 @@ describe("Monitor", function()
     package.loaded["monitor"] = nil
   end)
 
-  it("batches metrics", function()
-    local monitor = require("monitor")
+  it("extended batch size", function()
     mock_ngx({ var = {} })
+    local monitor = require("monitor")
+    monitor.set_metrics_max_batch_size(20000)
+
+    for i = 1,20000,1 do
+      monitor.call()
+    end
+
+    assert.equal(20000, #monitor.get_metrics_batch())
+  end)
+
+  it("batches metrics", function()
+    mock_ngx({ var = {} })
+    local monitor = require("monitor")
 
     for i = 1,10,1 do
       monitor.call()
@@ -42,10 +54,10 @@ describe("Monitor", function()
   end)
 
   describe("flush", function()
-    it("short circuits when premmature is true (when worker is shutting down)", function()
+    it("short circuits when premature is true (when worker is shutting down)", function()
       local tcp_mock = mock_ngx_socket_tcp()
-      local monitor = require("monitor")
       mock_ngx({ var = {} })
+      local monitor = require("monitor")
 
       for i = 1,10,1 do
         monitor.call()
@@ -64,7 +76,6 @@ describe("Monitor", function()
 
     it("JSON encodes and sends the batched metrics", function()
       local tcp_mock = mock_ngx_socket_tcp()
-      local monitor = require("monitor")
 
       local ngx_var_mock = {
         host = "example.com",
@@ -86,6 +97,7 @@ describe("Monitor", function()
         upstream_status = "200",
       }
       mock_ngx({ var = ngx_var_mock })
+      local monitor = require("monitor")
       monitor.call()
 
       local ngx_var_mock1 = ngx_var_mock
@@ -96,7 +108,42 @@ describe("Monitor", function()
 
       monitor.flush()
 
-      local expected_payload = '[{"host":"example.com","method":"GET","requestLength":256,"status":"200","upstreamResponseLength":456,"upstreamLatency":0.01,"upstreamResponseTime":0.02,"path":"\\/","requestTime":0.04,"ingress":"example","namespace":"default","service":"http-svc","responseLength":512},{"host":"example.com","method":"POST","requestLength":256,"status":"201","upstreamResponseLength":456,"upstreamLatency":0.01,"upstreamResponseTime":0.02,"path":"\\/","requestTime":0.04,"ingress":"example","namespace":"default","service":"http-svc","responseLength":512}]'
+      local expected_payload = cjson.encode({
+        {
+          host = "example.com",
+          namespace = "default",
+          ingress = "example",
+          service = "http-svc",
+          path = "/",
+
+          method = "GET",
+          status = "200",
+          requestLength = 256,
+          requestTime = 0.04,
+          responseLength = 512,
+
+          upstreamLatency = 0.01,
+          upstreamResponseTime = 0.02,
+          upstreamResponseLength = 456,
+        },
+        {
+          host = "example.com",
+          namespace = "default",
+          ingress = "example",
+          service = "http-svc",
+          path = "/",
+
+          method = "POST",
+          status = "201",
+          requestLength = 256,
+          requestTime = 0.04,
+          responseLength = 512,
+
+          upstreamLatency = 0.01,
+          upstreamResponseTime = 0.02,
+          upstreamResponseLength = 456,
+        },
+      })
 
       assert.stub(tcp_mock.connect).was_called_with(tcp_mock, "unix:/tmp/prometheus-nginx.socket")
       assert.stub(tcp_mock.send).was_called_with(tcp_mock, expected_payload)

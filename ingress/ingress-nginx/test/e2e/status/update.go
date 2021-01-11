@@ -17,14 +17,15 @@ limitations under the License.
 package settings
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo"
+	"github.com/stretchr/testify/assert"
 
 	appsv1 "k8s.io/api/apps/v1"
 	apiv1 "k8s.io/api/core/v1"
@@ -34,47 +35,43 @@ import (
 	"k8s.io/ingress-nginx/test/e2e/framework"
 )
 
-var _ = framework.IngressNginxDescribe("Status Update [Status]", func() {
+var _ = framework.IngressNginxDescribe("[Status] status update", func() {
 	f := framework.NewDefaultFramework("status-update")
 	host := "status-update"
 	address := getHostIP()
 
-	BeforeEach(func() {
-	})
-
-	AfterEach(func() {
-	})
-
-	It("should update status field after client-go reconnection", func() {
+	ginkgo.It("should update status field after client-go reconnection", func() {
 		port, cmd, err := f.KubectlProxy(0)
-		Expect(err).NotTo(HaveOccurred(), "unexpected error starting kubectl proxy")
+		assert.Nil(ginkgo.GinkgoT(), err, "unexpected error starting kubectl proxy")
 
-		err = framework.UpdateDeployment(f.KubeClientSet, f.Namespace, "nginx-ingress-controller", 1,
-			func(deployment *appsv1.Deployment) error {
-				args := deployment.Spec.Template.Spec.Containers[0].Args
-				args = append(args, fmt.Sprintf("--apiserver-host=http://%s:%d", address.String(), port))
-				args = append(args, "--publish-status-address=1.1.0.0")
-				// flags --publish-service and --publish-status-address are mutually exclusive
-				var index int
-				for k, v := range args {
-					if strings.Index(v, "--publish-service") != -1 {
-						index = k
-						break
-					}
-				}
-				if index > -1 {
-					args[index] = ""
+		err = f.UpdateIngressControllerDeployment(func(deployment *appsv1.Deployment) error {
+			args := []string{}
+			// flags --publish-service and --publish-status-address are mutually exclusive
+
+			for _, v := range deployment.Spec.Template.Spec.Containers[0].Args {
+				if strings.Contains(v, "--publish-service") {
+					continue
 				}
 
-				deployment.Spec.Template.Spec.Containers[0].Args = args
-				_, err := f.KubeClientSet.AppsV1().Deployments(f.Namespace).Update(deployment)
-				return err
-			})
-		Expect(err).NotTo(HaveOccurred(), "unexpected error updating ingress controller deployment flags")
+				if strings.Contains(v, "--update-status") {
+					continue
+				}
+
+				args = append(args, v)
+			}
+
+			args = append(args, fmt.Sprintf("--apiserver-host=http://%s:%d", address.String(), port))
+			args = append(args, "--publish-status-address=1.1.0.0")
+
+			deployment.Spec.Template.Spec.Containers[0].Args = args
+			_, err := f.KubeClientSet.AppsV1().Deployments(f.Namespace).Update(context.TODO(), deployment, metav1.UpdateOptions{})
+			return err
+		})
+		assert.Nil(ginkgo.GinkgoT(), err, "unexpected error updating ingress controller deployment flags")
 
 		f.NewEchoDeploymentWithReplicas(1)
 
-		ing := f.EnsureIngress(framework.NewSingleIngress(host, "/", host, f.Namespace, "http-svc", 80, nil))
+		ing := f.EnsureIngress(framework.NewSingleIngress(host, "/", host, f.Namespace, framework.EchoService, 80, nil))
 
 		f.WaitForNginxConfiguration(
 			func(cfg string) bool {
@@ -82,35 +79,37 @@ var _ = framework.IngressNginxDescribe("Status Update [Status]", func() {
 			})
 
 		framework.Logf("waiting for leader election and initial status update")
-		time.Sleep(30 * time.Second)
+		framework.Sleep(30 * time.Second)
 
 		err = cmd.Process.Kill()
-		Expect(err).NotTo(HaveOccurred(), "unexpected error terminating kubectl proxy")
+		assert.Nil(ginkgo.GinkgoT(), err, "unexpected error terminating kubectl proxy")
 
-		ing, err = f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Get(host, metav1.GetOptions{})
-		Expect(err).NotTo(HaveOccurred(), "unexpected error getting %s/%v Ingress", f.Namespace, host)
+		ing, err = f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Get(context.TODO(), host, metav1.GetOptions{})
+		assert.Nil(ginkgo.GinkgoT(), err, "unexpected error getting %s/%v Ingress", f.Namespace, host)
 
 		ing.Status.LoadBalancer.Ingress = []apiv1.LoadBalancerIngress{}
-		_, err = f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).UpdateStatus(ing)
-		Expect(err).NotTo(HaveOccurred(), "unexpected error cleaning Ingress status")
-		time.Sleep(10 * time.Second)
+		_, err = f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).UpdateStatus(context.TODO(), ing, metav1.UpdateOptions{})
+		assert.Nil(ginkgo.GinkgoT(), err, "unexpected error cleaning Ingress status")
+		framework.Sleep(10 * time.Second)
 
 		err = f.KubeClientSet.CoreV1().
 			ConfigMaps(f.Namespace).
-			Delete("ingress-controller-leader-nginx", &metav1.DeleteOptions{})
-		Expect(err).NotTo(HaveOccurred(), "unexpected error deleting leader election configmap")
+			Delete(context.TODO(), "ingress-controller-leader-nginx", metav1.DeleteOptions{})
+		assert.Nil(ginkgo.GinkgoT(), err, "unexpected error deleting leader election configmap")
 
 		_, cmd, err = f.KubectlProxy(port)
-		Expect(err).NotTo(HaveOccurred(), "unexpected error starting kubectl proxy")
+		assert.Nil(ginkgo.GinkgoT(), err, "unexpected error starting kubectl proxy")
 		defer func() {
+			defer ginkgo.GinkgoRecover()
+
 			if cmd != nil {
 				err := cmd.Process.Kill()
-				Expect(err).NotTo(HaveOccurred(), "unexpected error terminating kubectl proxy")
+				assert.Nil(ginkgo.GinkgoT(), err, "unexpected error terminating kubectl proxy")
 			}
 		}()
 
-		err = wait.Poll(10*time.Second, framework.DefaultTimeout, func() (done bool, err error) {
-			ing, err = f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Get(host, metav1.GetOptions{})
+		err = wait.Poll(5*time.Second, 4*time.Minute, func() (done bool, err error) {
+			ing, err = f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Get(context.TODO(), host, metav1.GetOptions{})
 			if err != nil {
 				return false, nil
 			}
@@ -121,8 +120,8 @@ var _ = framework.IngressNginxDescribe("Status Update [Status]", func() {
 
 			return true, nil
 		})
-		Expect(err).NotTo(HaveOccurred(), "unexpected error waiting for ingress status")
-		Expect(ing.Status.LoadBalancer.Ingress).Should(Equal([]apiv1.LoadBalancerIngress{
+		assert.Nil(ginkgo.GinkgoT(), err, "unexpected error waiting for ingress status")
+		assert.Equal(ginkgo.GinkgoT(), ing.Status.LoadBalancer.Ingress, ([]apiv1.LoadBalancerIngress{
 			{IP: "1.1.0.0"},
 		}))
 	})

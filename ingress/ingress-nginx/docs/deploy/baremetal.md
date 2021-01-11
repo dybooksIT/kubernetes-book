@@ -33,9 +33,7 @@ MetalLB can be deployed either with a simple Kubernetes manifest or with Helm. T
 was deployed following the [Installation][metallb-install] instructions.
 
 MetalLB requires a pool of IP addresses in order to be able to take ownership of the `ingress-nginx` Service. This pool
-can be defined in a ConfigMap named `config` located in the same namespace as the MetalLB controller. In the simplest
-possible scenario, the pool is composed of the IP addresses of Kubernetes nodes, but IP addresses can also be handed out
-by a DHCP server.
+can be defined in a ConfigMap named `config` located in the same namespace as the MetalLB controller. This pool of IPs **must** be dedicated to MetalLB's use, you can't reuse the Kubernetes node IPs or IPs handed out by a DHCP server.
 
 !!! example
     Given the following 3-node Kubernetes cluster (the external IP is added as an example, in most bare-metal
@@ -64,14 +62,14 @@ by a DHCP server.
         - name: default
           protocol: layer2
           addresses:
-          - 203.0.113.2-203.0.113.3
+          - 203.0.113.10-203.0.113.15
     ```
 
     ```console
     $ kubectl -n ingress-nginx get svc
     NAME                   TYPE          CLUSTER-IP     EXTERNAL-IP  PORT(S)
     default-http-backend   ClusterIP     10.0.64.249    <none>       80/TCP
-    ingress-nginx          LoadBalancer  10.0.220.217   203.0.113.3  80:30100/TCP,443:30101/TCP
+    ingress-nginx          LoadBalancer  10.0.220.217   203.0.113.10  80:30100/TCP,443:30101/TCP
     ```
 
 As soon as MetalLB sets the external IP address of the `ingress-nginx` LoadBalancer Service, the corresponding entries
@@ -91,7 +89,7 @@ Server: nginx/1.15.2
 
 [metallb]: https://metallb.universe.tf/
 [metallb-maturity]: https://metallb.universe.tf/concepts/maturity/
-[metallb-l2]: https://metallb.universe.tf/tutorial/layer2/
+[metallb-l2]: https://metallb.universe.tf/concepts/layer2/
 [metallb-install]: https://metallb.universe.tf/installation/
 [metallb-trafficpolicies]: https://metallb.universe.tf/usage/#traffic-policies
 
@@ -172,14 +170,14 @@ field of the `ingress-nginx` Service spec to `Local` ([example][preserve-ip]).
     host-3   Ready    node     203.0.113.3
     ```
 
-    with a `nginx-ingress-controller` Deployment composed of 2 replicas
+    with a `ingress-nginx-controller` Deployment composed of 2 replicas
 
     ```console
     $ kubectl -n ingress-nginx get pod -o wide
     NAME                                       READY   STATUS    IP           NODE
     default-http-backend-7c5bc89cc9-p86md      1/1     Running   172.17.1.1   host-2
-    nginx-ingress-controller-cf9ff8c96-8vvf8   1/1     Running   172.17.0.3   host-3
-    nginx-ingress-controller-cf9ff8c96-pxsds   1/1     Running   172.17.1.4   host-2
+    ingress-nginx-controller-cf9ff8c96-8vvf8   1/1     Running   172.17.0.3   host-3
+    ingress-nginx-controller-cf9ff8c96-pxsds   1/1     Running   172.17.1.4   host-2
     ```
 
     Requests sent to `host-2` and `host-3` would be forwarded to NGINX and original client's IP would be preserved,
@@ -281,15 +279,15 @@ template:
     including the host's loopback. Please evaluate the impact this may have on the security of your system carefully.
 
 !!! example
-    Consider this `nginx-ingress-controller` Deployment composed of 2 replicas, NGINX Pods inherit from the IP address
+    Consider this `ingress-nginx-controller` Deployment composed of 2 replicas, NGINX Pods inherit from the IP address
     of their host instead of an internal Pod IP.
 
     ```console
     $ kubectl -n ingress-nginx get pod -o wide
     NAME                                       READY   STATUS    IP            NODE
     default-http-backend-7c5bc89cc9-p86md      1/1     Running   172.17.1.1    host-2
-    nginx-ingress-controller-5b4cf5fc6-7lg6c   1/1     Running   203.0.113.3   host-3
-    nginx-ingress-controller-5b4cf5fc6-lzrls   1/1     Running   203.0.113.2   host-2
+    ingress-nginx-controller-5b4cf5fc6-7lg6c   1/1     Running   203.0.113.3   host-3
+    ingress-nginx-controller-5b4cf5fc6-lzrls   1/1     Running   203.0.113.2   host-2
     ```
 
 One major limitation of this deployment approach is that only **a single NGINX Ingress controller Pod** may be scheduled
@@ -297,7 +295,7 @@ on each cluster node, because binding the same port multiple times on the same n
 impossible. Pods that are unschedulable due to such situation fail with the following event:
 
 ```console
-$ kubectl -n ingress-nginx describe pod <unschedulable-nginx-ingress-controller-pod>
+$ kubectl -n ingress-nginx describe pod <unschedulable-ingress-nginx-controller-pod>
 ...
 Events:
   Type     Reason            From               Message
@@ -342,14 +340,14 @@ Instead, and because bare-metal nodes usually don't have an ExternalIP, one has 
 address of all nodes running the NGINX Ingress controller.
 
 !!! example
-    Given a `nginx-ingress-controller` DaemonSet composed of 2 replicas
+    Given a `ingress-nginx-controller` DaemonSet composed of 2 replicas
 
     ```console
     $ kubectl -n ingress-nginx get pod -o wide
     NAME                                       READY   STATUS    IP            NODE
     default-http-backend-7c5bc89cc9-p86md      1/1     Running   172.17.1.1    host-2
-    nginx-ingress-controller-5b4cf5fc6-7lg6c   1/1     Running   203.0.113.3   host-3
-    nginx-ingress-controller-5b4cf5fc6-lzrls   1/1     Running   203.0.113.2   host-2
+    ingress-nginx-controller-5b4cf5fc6-7lg6c   1/1     Running   203.0.113.3   host-3
+    ingress-nginx-controller-5b4cf5fc6-lzrls   1/1     Running   203.0.113.2   host-2
     ```
 
     the controller sets the status of all Ingress objects it manages to the following value:
@@ -367,7 +365,7 @@ address of all nodes running the NGINX Ingress controller.
 [taints]: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
 [daemonset]: https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/
 [dnspolicy]: https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#pod-s-dns-policy
-[cli-args]: ../../user-guide/cli-arguments/
+[cli-args]: ../user-guide/cli-arguments.md
 
 ## Using a self-provisioned edge
 

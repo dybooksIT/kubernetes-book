@@ -17,16 +17,10 @@ limitations under the License.
 package process
 
 import (
-	"fmt"
-	"net"
-	"os"
 	"os/exec"
 	"syscall"
-	"time"
 
-	ps "github.com/mitchellh/go-ps"
-	"github.com/ncabatoff/process-exporter/proc"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 )
 
 // IsRespawnIfRequired checks if error type is exec.ExitError or not
@@ -43,53 +37,4 @@ NGINX master process died (%v): %v
 -------------------------------------------------------------------------------
 `, waitStatus.ExitStatus(), err)
 	return true
-}
-
-// WaitUntilPortIsAvailable waits until there is no NGINX master or worker
-// process/es listening in a particular port.
-func WaitUntilPortIsAvailable(port int) {
-	// we wait until the workers are killed
-	for {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("0.0.0.0:%v", port), 1*time.Second)
-		if err != nil {
-			break
-		}
-		conn.Close()
-		// kill nginx worker processes
-		fs, err := proc.NewFS("/proc", false)
-		if err != nil {
-			klog.Errorf("unexpected error reading /proc information: %v", err)
-			continue
-		}
-
-		procs, _ := fs.FS.AllProcs()
-		for _, p := range procs {
-			pn, err := p.Comm()
-			if err != nil {
-				klog.Errorf("unexpected error obtaining process information: %v", err)
-				continue
-			}
-
-			if pn == "nginx" {
-				osp, err := os.FindProcess(p.PID)
-				if err != nil {
-					klog.Errorf("unexpected error obtaining process information: %v", err)
-					continue
-				}
-				osp.Signal(syscall.SIGQUIT)
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-// IsNginxRunning returns true if a process with the name 'nginx' is found
-func IsNginxRunning() bool {
-	processes, _ := ps.Processes()
-	for _, p := range processes {
-		if p.Executable() == "nginx" {
-			return true
-		}
-	}
-	return false
 }

@@ -1,5 +1,13 @@
 local ngx_re_split = require("ngx.re").split
 
+local certificate_configured_for_current_request =
+  require("certificate").configured_for_current_request
+local global_throttle = require("global_throttle")
+
+local ngx = ngx
+local io = io
+local math = math
+local string = string
 local original_randomseed = math.randomseed
 local string_format = string.format
 local ngx_redirect = ngx.redirect
@@ -36,8 +44,8 @@ end
 math.randomseed = function(seed)
   local pid = ngx.worker.pid()
   if seeds[pid] then
-    ngx.log(ngx.WARN,
-      string.format("ignoring math.randomseed(%d) since PRNG is already seeded for worker %d", seed, pid))
+    ngx.log(ngx.WARN, string.format("ignoring math.randomseed(%d) since PRNG "
+      .. "is already seeded for worker %d", seed, pid))
     return
   end
 
@@ -54,8 +62,20 @@ local function randomseed()
   math.randomseed(seed)
 end
 
-local function redirect_to_https()
-  return ngx.var.pass_access_scheme == "http" and (ngx.var.scheme == "http" or ngx.var.scheme == "https")
+local function redirect_to_https(location_config)
+  if location_config.force_no_ssl_redirect then
+    return false
+  end
+
+  if location_config.force_ssl_redirect and ngx.var.pass_access_scheme == "http" then
+    return true
+  end
+
+  if ngx.var.pass_access_scheme ~= "http" then
+    return false
+  end
+
+  return location_config.ssl_redirect and certificate_configured_for_current_request()
 end
 
 local function redirect_host()
@@ -91,7 +111,7 @@ end
 -- phases or redirection
 function _M.rewrite(location_config)
   ngx.var.pass_access_scheme = ngx.var.scheme
-  ngx.var.pass_server_port = ngx.var.server_port
+
   ngx.var.best_http_host = ngx.var.http_host or ngx.var.host
 
   if config.use_forwarded_headers then
@@ -110,6 +130,12 @@ function _M.rewrite(location_config)
     end
   end
 
+  if config.use_proxy_protocol then
+    if ngx.var.proxy_protocol_server_port == "443" then
+      ngx.var.pass_access_scheme = "https"
+    end
+  end
+
   ngx.var.pass_port = ngx.var.pass_server_port
   if config.is_ssl_passthrough_enabled then
     if ngx.var.pass_server_port == config.listen_ports.ssl_proxy then
@@ -119,14 +145,36 @@ function _M.rewrite(location_config)
     ngx.var.pass_port = 443
   end
 
-  if location_config.force_ssl_redirect and redirect_to_https() then
-    local uri = string_format("https://%s%s", redirect_host(), ngx.var.request_uri)
-
-    if location_config.use_port_in_redirects then
-      uri = string_format("https://%s:%s%s", redirect_host(), config.listen_ports.https, ngx.var.request_uri)
+  if redirect_to_https(location_config) then
+    local request_uri = ngx.var.request_uri
+    -- do not append a trailing slash on redirects
+    if string.sub(request_uri, -1) == "/" then
+      request_uri = string.sub(request_uri, 1, -2)
     end
 
-    ngx_redirect(uri, config.http_redirect_code)
+    local uri = string_format("https://%s%s", redirect_host(), request_uri)
+
+    if location_config.use_port_in_redirects then
+      uri = string_format("https://%s:%s%s", redirect_host(),
+        config.listen_ports.https, request_uri)
+    end
+
+    return ngx_redirect(uri, config.http_redirect_code)
+  end
+
+  global_throttle.throttle(config.global_throttle, location_config.global_throttle)
+end
+
+function _M.header()
+  if config.hsts and ngx.var.scheme == "https" and certificate_configured_for_current_request then
+    local value = "max-age=" .. config.hsts_max_age
+    if config.hsts_include_subdomains then
+      value = value .. "; includeSubDomains"
+    end
+    if config.hsts_preload then
+      value = value .. "; preload"
+    end
+    ngx.header["Strict-Transport-Security"] = value
   end
 end
 

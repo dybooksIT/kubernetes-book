@@ -9,7 +9,16 @@ local resty_lock = require("resty.lock")
 local util = require("util")
 local split = require("util.split")
 
+local ngx = ngx
+local math = math
+local pairs = pairs
+local ipairs = ipairs
+local tostring = tostring
+local string = string
+local tonumber = tonumber
+local setmetatable = setmetatable
 local string_format = string.format
+local table_insert = table.insert
 local ngx_log = ngx.log
 local INFO = ngx.INFO
 
@@ -97,10 +106,15 @@ local function get_or_update_ewma(upstream, rtt, update)
 end
 
 
+local function get_upstream_name(upstream)
+   return upstream.address .. ":" .. upstream.port
+end
+
+
 local function score(upstream)
   -- Original implementation used names
   -- Endpoints don't have names, so passing in IP:Port as key instead
-  local upstream_name = upstream.address .. ":" .. upstream.port
+  local upstream_name = get_upstream_name(upstream)
   return get_or_update_ewma(upstream_name, 0, false)
 end
 
@@ -127,6 +141,7 @@ local function pick_and_score(peers, k)
       lowest_score_index, lowest_score = i, new_score
     end
   end
+
   return peers[lowest_score_index], lowest_score
 end
 
@@ -138,7 +153,7 @@ local function calculate_slow_start_ewma(self)
   local endpoints_count = 0
 
   for _, endpoint in pairs(self.peers) do
-    local endpoint_string = endpoint.address .. ":" .. endpoint.port
+    local endpoint_string = get_upstream_name(endpoint)
     local ewma = ngx.shared.balancer_ewma:get(endpoint_string)
 
     if ewma then
@@ -161,21 +176,50 @@ function _M.balance(self)
 
   if #peers > 1 then
     local k = (#peers < PICK_SET_SIZE) and #peers or PICK_SET_SIZE
-    local peer_copy = util.deepcopy(peers)
-    endpoint, ewma_score = pick_and_score(peer_copy, k)
+
+    local tried_endpoints
+    if not ngx.ctx.balancer_ewma_tried_endpoints then
+      tried_endpoints = {}
+      ngx.ctx.balancer_ewma_tried_endpoints = tried_endpoints
+    else
+      tried_endpoints = ngx.ctx.balancer_ewma_tried_endpoints
+    end
+
+    local filtered_peers
+    for _, peer in ipairs(peers) do
+      if not tried_endpoints[get_upstream_name(peer)] then
+        if not filtered_peers then
+          filtered_peers = {}
+        end
+        table_insert(filtered_peers, peer)
+      end
+    end
+
+    if not filtered_peers then
+      ngx.log(ngx.WARN, "all endpoints have been retried")
+      filtered_peers = util.deepcopy(peers)
+    end
+
+    if #filtered_peers > 1 then
+      endpoint, ewma_score = pick_and_score(filtered_peers, k)
+    else
+      endpoint, ewma_score = filtered_peers[1], score(filtered_peers[1])
+    end
+
+    tried_endpoints[get_upstream_name(endpoint)] = true
   end
 
   ngx.var.balancer_ewma_score = ewma_score
 
   -- TODO(elvinefendi) move this processing to _M.sync
-  return endpoint.address .. ":" .. endpoint.port
+  return get_upstream_name(endpoint)
 end
 
 function _M.after_balance(_)
-  local response_time = tonumber(split.get_first_value(ngx.var.upstream_response_time)) or 0
-  local connect_time = tonumber(split.get_first_value(ngx.var.upstream_connect_time)) or 0
+  local response_time = tonumber(split.get_last_value(ngx.var.upstream_response_time)) or 0
+  local connect_time = tonumber(split.get_last_value(ngx.var.upstream_connect_time)) or 0
   local rtt = connect_time + response_time
-  local upstream = split.get_first_value(ngx.var.upstream_addr)
+  local upstream = split.get_last_value(ngx.var.upstream_addr)
 
   if util.is_blank(upstream) then
     return
@@ -185,7 +229,11 @@ function _M.after_balance(_)
 end
 
 function _M.sync(self, backend)
-  local normalized_endpoints_added, normalized_endpoints_removed = util.diff_endpoints(self.peers, backend.endpoints)
+  self.traffic_shaping_policy = backend.trafficShapingPolicy
+  self.alternative_backends = backend.alternativeBackends
+
+  local normalized_endpoints_added, normalized_endpoints_removed =
+    util.diff_endpoints(self.peers, backend.endpoints)
 
   if #normalized_endpoints_added == 0 and #normalized_endpoints_removed == 0 then
     ngx.log(ngx.INFO, "endpoints did not change for backend " .. tostring(backend.name))
@@ -194,8 +242,6 @@ function _M.sync(self, backend)
 
   ngx_log(INFO, string_format("[%s] peers have changed for backend %s", self.name, backend.name))
 
-  self.traffic_shaping_policy = backend.trafficShapingPolicy
-  self.alternative_backends = backend.alternativeBackends
   self.peers = backend.endpoints
 
   for _, endpoint_string in ipairs(normalized_endpoints_removed) do

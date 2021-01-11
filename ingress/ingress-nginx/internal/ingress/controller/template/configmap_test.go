@@ -63,8 +63,9 @@ func TestMergeConfigMapToStruct(t *testing.T) {
 		"access-log-params":             "buffer=4k gzip",
 		"access-log-path":               "/var/log/test/access.log",
 		"error-log-path":                "/var/log/test/error.log",
-		"use-gzip":                      "true",
+		"use-gzip":                      "false",
 		"gzip-level":                    "9",
+		"gzip-min-length":               "1024",
 		"gzip-types":                    "text/html",
 		"proxy-real-ip-cidr":            "1.1.1.1/8,2.2.2.2/24",
 		"bind-address":                  "1.1.1.1,2.2.2.2,3.3.3,2001:db8:a0b:12f0::1,3731:54:65fe:2::a7,33:33:33::33::33",
@@ -73,6 +74,7 @@ func TestMergeConfigMapToStruct(t *testing.T) {
 		"nginx-status-ipv6-whitelist":   "::1,2001::/16",
 		"proxy-add-original-uri-header": "false",
 		"disable-ipv6-dns":              "true",
+		"default-type":                  "text/plain",
 	}
 	def := config.NewDefault()
 	def.CustomHTTPErrors = []int{300, 400}
@@ -85,6 +87,7 @@ func TestMergeConfigMapToStruct(t *testing.T) {
 	def.ProxySendTimeout = 2
 	def.UseProxyProtocol = true
 	def.GzipLevel = 9
+	def.GzipMinLength = 1024
 	def.GzipTypes = "text/html"
 	def.ProxyRealIPCIDR = []string{"1.1.1.1/8", "2.2.2.2/24"}
 	def.BindAddressIpv4 = []string{"1.1.1.1", "2.2.2.2"}
@@ -95,6 +98,7 @@ func TestMergeConfigMapToStruct(t *testing.T) {
 	def.ProxyAddOriginalURIHeader = false
 	def.LuaSharedDicts = defaultLuaSharedDicts
 	def.DisableIpv6DNS = true
+	def.DefaultType = "text/plain"
 
 	hash, err := hashstructure.Hash(def, &hashstructure.HashOptions{
 		TagName: "json",
@@ -221,6 +225,28 @@ func TestGlobalExternalAuthSigninParsing(t *testing.T) {
 		cfg := ReadConfig(map[string]string{"global-auth-signin": tc.signin})
 		if cfg.GlobalExternalAuth.SigninURL != tc.expect {
 			t.Errorf("Testing %v. Expected \"%v\" but \"%v\" was returned", n, tc.expect, cfg.GlobalExternalAuth.SigninURL)
+		}
+	}
+}
+
+func TestGlobalExternalAuthSigninRedirectParamParsing(t *testing.T) {
+	testCases := map[string]struct {
+		param  string
+		signin string
+		expect string
+	}{
+		"no param":      {"", "http://bar.foo.com/auth-error-page", ""},
+		"valid param":   {"orig", "http://bar.foo.com/auth-error-page", "orig"},
+		"no signin url": {"orig", "", ""},
+	}
+
+	for n, tc := range testCases {
+		cfg := ReadConfig(map[string]string{
+			"global-auth-signin":                tc.signin,
+			"global-auth-signin-redirect-param": tc.param,
+		})
+		if cfg.GlobalExternalAuth.SigninURLRedirectParam != tc.expect {
+			t.Errorf("Testing %v. Expected \"%v\" but \"%v\" was returned", n, tc.expect, cfg.GlobalExternalAuth.SigninURLRedirectParam)
 		}
 	}
 }
@@ -353,6 +379,42 @@ func TestLuaSharedDictsParsing(t *testing.T) {
 		cfg := ReadConfig(tc.entry)
 		if !reflect.DeepEqual(cfg.LuaSharedDicts, tc.expect) {
 			t.Errorf("Testing %v. Expected \"%v\" but \"%v\" was returned", tc.name, tc.expect, cfg.LuaSharedDicts)
+		}
+	}
+}
+
+func TestSplitAndTrimSpace(t *testing.T) {
+	testsCases := []struct {
+		name   string
+		input  string
+		expect []string
+	}{
+		{
+			name:   "empty string",
+			input:  "",
+			expect: []string{},
+		},
+		{
+			name:   "two elements",
+			input:  "el1,el2",
+			expect: []string{"el1", "el2"},
+		},
+		{
+			name:   "two elements with spaces",
+			input:  " el1, el2",
+			expect: []string{"el1", "el2"},
+		},
+		{
+			name:   "empty elements with spaces",
+			input:  " el1, el2,el3,,",
+			expect: []string{"el1", "el2", "el3"},
+		},
+	}
+
+	for _, tc := range testsCases {
+		data := splitAndTrimSpace(tc.input, ",")
+		if !reflect.DeepEqual(data, tc.expect) {
+			t.Errorf("Testing %v. Expected \"%v\" but \"%v\" was returned", tc.name, tc.expect, data)
 		}
 	}
 }

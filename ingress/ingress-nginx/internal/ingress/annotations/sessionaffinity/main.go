@@ -20,7 +20,7 @@ import (
 	"regexp"
 
 	networking "k8s.io/api/networking/v1beta1"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"k8s.io/ingress-nginx/internal/ingress/annotations/parser"
 	"k8s.io/ingress-nginx/internal/ingress/resolver"
@@ -28,6 +28,7 @@ import (
 
 const (
 	annotationAffinityType = "affinity"
+	annotationAffinityMode = "affinity-mode"
 	// If a cookie with this name exists,
 	// its value is used as an index into the list of available backends.
 	annotationAffinityCookieName = "session-cookie-name"
@@ -45,6 +46,12 @@ const (
 	// This is used to control the cookie path when use-regex is set to true
 	annotationAffinityCookiePath = "session-cookie-path"
 
+	// This is used to control the SameSite attribute of the cookie
+	annotationAffinityCookieSameSite = "session-cookie-samesite"
+
+	// This is used to control whether SameSite=None should be conditionally applied based on the User-Agent
+	annotationAffinityCookieConditionalSameSiteNone = "session-cookie-conditional-samesite-none"
+
 	// This is used to control the cookie change after request failure
 	annotationAffinityCookieChangeOnFailure = "session-cookie-change-on-failure"
 )
@@ -57,6 +64,8 @@ var (
 type Config struct {
 	// The type of affinity that will be used
 	Type string `json:"type"`
+	// The affinity mode, i.e. how sticky a session is
+	Mode string `json:"mode"`
 	Cookie
 }
 
@@ -72,6 +81,10 @@ type Cookie struct {
 	Path string `json:"path"`
 	// Flag that allows cookie regeneration on request failure
 	ChangeOnFailure bool `json:"changeonfailure"`
+	// SameSite attribute value
+	SameSite string `json:"samesite"`
+	// Flag that conditionally applies SameSite=None attribute on cookie if user agent accepts it.
+	ConditionalSameSiteNone bool `json:"conditional-samesite-none"`
 }
 
 // cookieAffinityParse gets the annotation values related to Cookie Affinity
@@ -83,35 +96,40 @@ func (a affinity) cookieAffinityParse(ing *networking.Ingress) *Cookie {
 
 	cookie.Name, err = parser.GetStringAnnotation(annotationAffinityCookieName, ing)
 	if err != nil {
-		klog.V(3).Infof("Ingress %v: No value found in annotation %v. Using the default %v", ing.Name, annotationAffinityCookieName, defaultAffinityCookieName)
+		klog.V(3).InfoS("Invalid or no annotation value found. Ignoring", "ingress", klog.KObj(ing), "annotation", annotationAffinityCookieExpires, "default", defaultAffinityCookieName)
 		cookie.Name = defaultAffinityCookieName
 	}
 
 	cookie.Expires, err = parser.GetStringAnnotation(annotationAffinityCookieExpires, ing)
 	if err != nil || !affinityCookieExpiresRegex.MatchString(cookie.Expires) {
-		klog.V(3).Infof("Invalid or no annotation value found in Ingress %v: %v. Ignoring it", ing.Name, annotationAffinityCookieExpires)
+		klog.V(3).InfoS("Invalid or no annotation value found. Ignoring", "ingress", klog.KObj(ing), "annotation", annotationAffinityCookieExpires)
 		cookie.Expires = ""
 	}
 
 	cookie.MaxAge, err = parser.GetStringAnnotation(annotationAffinityCookieMaxAge, ing)
 	if err != nil || !affinityCookieExpiresRegex.MatchString(cookie.MaxAge) {
-		klog.V(3).Infof("Invalid or no annotation value found in Ingress %v: %v. Ignoring it", ing.Name, annotationAffinityCookieMaxAge)
+		klog.V(3).InfoS("Invalid or no annotation value found. Ignoring", "ingress", klog.KObj(ing), "annotation", annotationAffinityCookieMaxAge)
 		cookie.MaxAge = ""
 	}
 
 	cookie.Path, err = parser.GetStringAnnotation(annotationAffinityCookiePath, ing)
 	if err != nil {
-		klog.V(3).Infof("Invalid or no annotation value found in Ingress %v: %v. Ignoring it", ing.Name, annotationAffinityCookieMaxAge)
+		klog.V(3).InfoS("Invalid or no annotation value found. Ignoring", "ingress", klog.KObj(ing), "annotation", annotationAffinityCookieMaxAge)
+	}
+
+	cookie.SameSite, err = parser.GetStringAnnotation(annotationAffinityCookieSameSite, ing)
+	if err != nil {
+		klog.V(3).InfoS("Invalid or no annotation value found. Ignoring", "ingress", klog.KObj(ing), "annotation", annotationAffinityCookieSameSite)
+	}
+
+	cookie.ConditionalSameSiteNone, err = parser.GetBoolAnnotation(annotationAffinityCookieConditionalSameSiteNone, ing)
+	if err != nil {
+		klog.V(3).InfoS("Invalid or no annotation value found. Ignoring", "ingress", klog.KObj(ing), "annotation", annotationAffinityCookieConditionalSameSiteNone)
 	}
 
 	cookie.ChangeOnFailure, err = parser.GetBoolAnnotation(annotationAffinityCookieChangeOnFailure, ing)
 	if err != nil {
-		klog.V(3).Infof("Invalid or no annotation value found in Ingress %v: %v. Ignoring it", ing.Name, annotationAffinityCookieChangeOnFailure)
-	}
-
-	cookie.ChangeOnFailure, err = parser.GetBoolAnnotation(annotationAffinityCookieChangeOnFailure, ing)
-	if err != nil {
-		klog.V(3).Infof("Invalid or no annotation value found in Ingress %v: %v. Ignoring it", ing.Name, annotationAffinityCookieChangeOnFailure)
+		klog.V(3).InfoS("Invalid or no annotation value found. Ignoring", "ingress", klog.KObj(ing), "annotation", annotationAffinityCookieChangeOnFailure)
 	}
 
 	return cookie
@@ -136,16 +154,23 @@ func (a affinity) Parse(ing *networking.Ingress) (interface{}, error) {
 		at = ""
 	}
 
+	// Check the affinity mode that will be used
+	am, err := parser.GetStringAnnotation(annotationAffinityMode, ing)
+	if err != nil {
+		am = ""
+	}
+
 	switch at {
 	case "cookie":
 		cookie = a.cookieAffinityParse(ing)
 	default:
-		klog.V(3).Infof("No default affinity was found for Ingress %v", ing.Name)
+		klog.V(3).InfoS("No default affinity found", "ingress", ing.Name)
 
 	}
 
 	return &Config{
 		Type:   at,
+		Mode:   am,
 		Cookie: *cookie,
 	}, nil
 }

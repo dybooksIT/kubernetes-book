@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -148,19 +149,17 @@ func TestIsDynamicConfigurationEnough(t *testing.T) {
 }
 
 func TestConfigureDynamically(t *testing.T) {
-	listener, err := net.Listen("unix", nginx.StatusSocket)
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%v", nginx.StatusPort))
 	if err != nil {
-		t.Errorf("crating unix listener: %s", err)
+		t.Fatalf("creating tcp listener: %s", err)
 	}
 	defer listener.Close()
-	defer os.Remove(nginx.StatusSocket)
 
-	streamListener, err := net.Listen("unix", nginx.StreamSocket)
+	streamListener, err := net.Listen("tcp", fmt.Sprintf(":%v", nginx.StreamPort))
 	if err != nil {
-		t.Errorf("crating unix listener: %s", err)
+		t.Fatalf("creating tcp listener: %s", err)
 	}
 	defer streamListener.Close()
-	defer os.Remove(nginx.StreamSocket)
 
 	endpointStats := map[string]int{"/configuration/backends": 0, "/configuration/general": 0, "/configuration/servers": 0}
 	resetEndpointStats := func() {
@@ -185,7 +184,7 @@ func TestConfigureDynamically(t *testing.T) {
 				}
 				body := string(b)
 
-				endpointStats[r.URL.Path] += 1
+				endpointStats[r.URL.Path]++
 
 				switch r.URL.Path {
 				case "/configuration/backends":
@@ -200,14 +199,11 @@ func TestConfigureDynamically(t *testing.T) {
 					}
 				case "/configuration/general":
 					{
-						if !strings.Contains(body, "controllerPodsCount") {
-							t.Errorf("controllerPodsCount should be present in JSON content: %v", body)
-						}
 					}
 				case "/configuration/servers":
 					{
-						if !strings.Contains(body, "[]") {
-							t.Errorf("controllerPodsCount should be present in JSON content: %v", body)
+						if !strings.Contains(body, `{"certificates":{},"servers":{"myapp.fake":"-1"}}`) {
+							t.Errorf("should be present in JSON content: %v", body)
 						}
 					}
 				default:
@@ -250,9 +246,8 @@ func TestConfigureDynamically(t *testing.T) {
 	}}
 
 	commonConfig := &ingress.Configuration{
-		Backends:            backends,
-		Servers:             servers,
-		ControllerPodsCount: 2,
+		Backends: backends,
+		Servers:  servers,
 	}
 
 	n := &NGINXController{
@@ -267,11 +262,6 @@ func TestConfigureDynamically(t *testing.T) {
 	if commonConfig.Backends[0].Endpoints[0].Target != target {
 		t.Errorf("unexpected change in the configuration object after configureDynamically invocation")
 	}
-	for endpoint, count := range endpointStats {
-		if count != 1 {
-			t.Errorf("Expected %v to receive %d requests but received %d.", endpoint, 1, count)
-		}
-	}
 
 	resetEndpointStats()
 	n.runningConfig.Backends = backends
@@ -284,8 +274,6 @@ func TestConfigureDynamically(t *testing.T) {
 			if count != 0 {
 				t.Errorf("Expected %v to receive %d requests but received %d.", endpoint, 0, count)
 			}
-		} else if count != 1 {
-			t.Errorf("Expected %v to receive %d requests but received %d.", endpoint, 1, count)
 		}
 	}
 
@@ -295,18 +283,14 @@ func TestConfigureDynamically(t *testing.T) {
 	if err != nil {
 		t.Errorf("unexpected error posting dynamic configuration: %v", err)
 	}
-	if count, _ := endpointStats["/configuration/backends"]; count != 0 {
+	if count := endpointStats["/configuration/backends"]; count != 0 {
 		t.Errorf("Expected %v to receive %d requests but received %d.", "/configuration/backends", 0, count)
 	}
-	if count, _ := endpointStats["/configuration/servers"]; count != 0 {
+	if count := endpointStats["/configuration/servers"]; count != 0 {
 		t.Errorf("Expected %v to receive %d requests but received %d.", "/configuration/servers", 0, count)
-	}
-	if count, _ := endpointStats["/configuration/general"]; count != 1 {
-		t.Errorf("Expected %v to receive %d requests but received %d.", "/configuration/general", 0, count)
 	}
 
 	resetEndpointStats()
-	n.runningConfig.ControllerPodsCount = commonConfig.ControllerPodsCount
 	err = n.configureDynamically(commonConfig)
 	if err != nil {
 		t.Errorf("unexpected error posting dynamic configuration: %v", err)
@@ -319,26 +303,30 @@ func TestConfigureDynamically(t *testing.T) {
 }
 
 func TestConfigureCertificates(t *testing.T) {
-	listener, err := net.Listen("unix", nginx.StatusSocket)
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%v", nginx.StatusPort))
 	if err != nil {
-		t.Fatalf("crating unix listener: %s", err)
+		t.Fatalf("creating tcp listener: %s", err)
 	}
 	defer listener.Close()
-	defer os.Remove(nginx.StatusSocket)
 
-	streamListener, err := net.Listen("unix", nginx.StreamSocket)
+	streamListener, err := net.Listen("tcp", fmt.Sprintf(":%v", nginx.StreamPort))
 	if err != nil {
-		t.Fatalf("crating unix listener: %s", err)
+		t.Fatalf("creating tcp listener: %s", err)
 	}
 	defer streamListener.Close()
-	defer os.Remove(nginx.StreamSocket)
 
-	servers := []*ingress.Server{{
-		Hostname: "myapp.fake",
-		SSLCert: &ingress.SSLCert{
-			PemCertKey: "fake-cert",
+	servers := []*ingress.Server{
+		{
+			Hostname: "myapp.fake",
+			SSLCert: &ingress.SSLCert{
+				PemCertKey: "fake-cert",
+				UID:        "c89a5111-b2e9-4af8-be19-c2a4a924c256",
+			},
 		},
-	}}
+		{
+			Hostname: "myapp.nossl",
+		},
+	}
 
 	server := &httptest.Server{
 		Listener: listener,
@@ -354,19 +342,25 @@ func TestConfigureCertificates(t *testing.T) {
 				if err != nil && err != io.EOF {
 					t.Fatal(err)
 				}
-				var postedServers []ingress.Server
-				err = jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(b, &postedServers)
+				var conf sslConfiguration
+				err = jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal(b, &conf)
 				if err != nil {
 					t.Fatal(err)
 				}
 
-				if len(servers) != len(postedServers) {
+				if len(servers) != len(conf.Servers) {
 					t.Errorf("Expected servers to be the same length as the posted servers")
 				}
 
-				for i, server := range servers {
-					if !server.Equal(&postedServers[i]) {
-						t.Errorf("Expected servers and posted servers to be equal")
+				for _, server := range servers {
+					if server.SSLCert == nil {
+						if conf.Servers[server.Hostname] != emptyUID {
+							t.Errorf("Expected server %s to have UID of %s but got %s", server.Hostname, emptyUID, conf.Servers[server.Hostname])
+						}
+					} else {
+						if server.SSLCert.UID != conf.Servers[server.Hostname] {
+							t.Errorf("Expected server %s to have UID of %s but got %s", server.Hostname, server.SSLCert.UID, conf.Servers[server.Hostname])
+						}
 					}
 				}
 			}),

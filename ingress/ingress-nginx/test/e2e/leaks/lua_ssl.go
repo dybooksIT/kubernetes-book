@@ -17,41 +17,37 @@ limitations under the License.
 package leaks
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-
-	"github.com/parnurzeal/gorequest"
+	"github.com/onsi/ginkgo"
+	"github.com/stretchr/testify/assert"
 	pool "gopkg.in/go-playground/pool.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/ingress-nginx/test/e2e/framework"
 )
 
-var _ = framework.IngressNginxDescribe("DynamicCertificates", func() {
+var _ = framework.IngressNginxDescribe("[Memory Leak] Dynamic Certificates", func() {
 	f := framework.NewDefaultFramework("lua-dynamic-certificates")
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		f.NewEchoDeployment()
-	})
-
-	AfterEach(func() {
 	})
 
 	framework.MemoryLeakIt("should not leak memory from ingress SSL certificates or configuration updates", func() {
 		hostCount := 1000
 		iterations := 10
 
-		By("Waiting a minute before starting the test")
-		time.Sleep(1 * time.Minute)
+		ginkgo.By("Waiting a minute before starting the test")
+		framework.Sleep(1 * time.Minute)
 
 		for iteration := 1; iteration <= iterations; iteration++ {
-			By(fmt.Sprintf("Running iteration %v", iteration))
+			ginkgo.By(fmt.Sprintf("Running iteration %v", iteration))
 
 			p := pool.NewLimited(200)
 
@@ -67,19 +63,19 @@ var _ = framework.IngressNginxDescribe("DynamicCertificates", func() {
 
 			p.Close()
 
-			By("waiting one minute before next iteration")
-			time.Sleep(1 * time.Minute)
+			ginkgo.By("waiting one minute before next iteration")
+			framework.Sleep(1 * time.Minute)
 		}
 	})
 })
 
-func privisionIngress(hostname string, f *framework.Framework) {
-	ing := f.EnsureIngress(framework.NewSingleIngressWithTLS(hostname, "/", hostname, []string{hostname}, f.Namespace, "http-svc", 80, nil))
+func provisionIngress(hostname string, f *framework.Framework) {
+	ing := f.EnsureIngress(framework.NewSingleIngressWithTLS(hostname, "/", hostname, []string{hostname}, f.Namespace, framework.EchoService, 80, nil))
 	_, err := framework.CreateIngressTLSSecret(f.KubeClientSet,
 		ing.Spec.TLS[0].Hosts,
 		ing.Spec.TLS[0].SecretName,
 		ing.Namespace)
-	Expect(err).NotTo(HaveOccurred())
+	assert.Nil(ginkgo.GinkgoT(), err)
 
 	f.WaitForNginxServer(hostname,
 		func(server string) bool {
@@ -89,23 +85,26 @@ func privisionIngress(hostname string, f *framework.Framework) {
 }
 
 func checkIngress(hostname string, f *framework.Framework) {
-	req := gorequest.New()
-	resp, _, errs := req.
-		Get(f.GetURL(framework.HTTPS)).
-		TLSClientConfig(&tls.Config{ServerName: hostname, InsecureSkipVerify: true}).
-		Set("Host", hostname).
-		End()
-	Expect(errs).Should(BeEmpty())
-	Expect(resp.StatusCode).Should(Equal(http.StatusOK))
+	resp := f.HTTPTestClientWithTLSConfig(&tls.Config{
+		ServerName:         hostname,
+		InsecureSkipVerify: true,
+	}).
+		GET("/").
+		WithURL(f.GetURL(framework.HTTPS)).
+		WithHeader("Host", hostname).
+		Expect().
+		Raw()
+
+	assert.Equal(ginkgo.GinkgoT(), resp.StatusCode, http.StatusOK)
 
 	// check the returned secret is not the fake one
 	cert := resp.TLS.PeerCertificates[0]
-	Expect(cert.DNSNames[0]).Should(Equal(hostname))
+	assert.Equal(ginkgo.GinkgoT(), cert.DNSNames[0], hostname)
 }
 
 func deleteIngress(hostname string, f *framework.Framework) {
-	err := f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Delete(hostname, &metav1.DeleteOptions{})
-	Expect(err).NotTo(HaveOccurred(), "unexpected error deleting ingress")
+	err := f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Delete(context.TODO(), hostname, metav1.DeleteOptions{})
+	assert.Nil(ginkgo.GinkgoT(), err, "unexpected error deleting ingress")
 }
 
 func run(host string, f *framework.Framework) pool.WorkFunc {
@@ -114,15 +113,15 @@ func run(host string, f *framework.Framework) pool.WorkFunc {
 			return nil, nil
 		}
 
-		By(fmt.Sprintf("\tcreating ingress for host %v", host))
-		privisionIngress(host, f)
+		ginkgo.By(fmt.Sprintf("\tcreating ingress for host %v", host))
+		provisionIngress(host, f)
 
-		time.Sleep(100 * time.Millisecond)
+		framework.Sleep(100 * time.Millisecond)
 
-		By(fmt.Sprintf("\tchecking ingress for host %v", host))
+		ginkgo.By(fmt.Sprintf("\tchecking ingress for host %v", host))
 		checkIngress(host, f)
 
-		By(fmt.Sprintf("\tdestroying ingress for host %v", host))
+		ginkgo.By(fmt.Sprintf("\tdestroying ingress for host %v", host))
 		deleteIngress(host, f)
 
 		return true, nil

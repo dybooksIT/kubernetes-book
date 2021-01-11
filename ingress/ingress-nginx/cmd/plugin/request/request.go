@@ -17,6 +17,7 @@ limitations under the License.
 package request
 
 import (
+	"context"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -32,9 +33,13 @@ import (
 )
 
 // ChoosePod finds a pod either by deployment or by name
-func ChoosePod(flags *genericclioptions.ConfigFlags, podName string, deployment string) (apiv1.Pod, error) {
+func ChoosePod(flags *genericclioptions.ConfigFlags, podName string, deployment string, selector string) (apiv1.Pod, error) {
 	if podName != "" {
 		return GetNamedPod(flags, podName)
+	}
+
+	if selector != "" {
+		return GetLabeledPod(flags, selector)
 	}
 
 	return GetDeploymentPod(flags, deployment)
@@ -70,6 +75,20 @@ func GetDeploymentPod(flags *genericclioptions.ConfigFlags, deployment string) (
 	return ings[0], nil
 }
 
+// GetLabeledPod finds a pod from a given label
+func GetLabeledPod(flags *genericclioptions.ConfigFlags, label string) (apiv1.Pod, error) {
+	ings, err := getLabeledPods(flags, label)
+	if err != nil {
+		return apiv1.Pod{}, err
+	}
+
+	if len(ings) == 0 {
+		return apiv1.Pod{}, fmt.Errorf("no pods for label selector %v found in namespace %v", label, util.GetNamespace(flags))
+	}
+
+	return ings[0], nil
+}
+
 // GetDeployments returns an array of Deployments
 func GetDeployments(flags *genericclioptions.ConfigFlags, namespace string) ([]appsv1.Deployment, error) {
 	rawConfig, err := flags.ToRESTConfig()
@@ -82,7 +101,7 @@ func GetDeployments(flags *genericclioptions.ConfigFlags, namespace string) ([]a
 		return make([]appsv1.Deployment, 0), err
 	}
 
-	deployments, err := api.Deployments(namespace).List(metav1.ListOptions{})
+	deployments, err := api.Deployments(namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return make([]appsv1.Deployment, 0), err
 	}
@@ -102,7 +121,7 @@ func GetIngressDefinitions(flags *genericclioptions.ConfigFlags, namespace strin
 		return make([]networking.Ingress, 0), err
 	}
 
-	pods, err := api.Ingresses(namespace).List(metav1.ListOptions{})
+	pods, err := api.Ingresses(namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return make([]networking.Ingress, 0), err
 	}
@@ -171,7 +190,7 @@ func getEndpoints(flags *genericclioptions.ConfigFlags, namespace string) ([]api
 		return nil, err
 	}
 
-	endpointsList, err := api.Endpoints(namespace).List(metav1.ListOptions{})
+	endpointsList, err := api.Endpoints(namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +211,7 @@ func tryAllNamespacesEndpointsCache(flags *genericclioptions.ConfigFlags) {
 }
 
 func tryFilteringEndpointsFromAllNamespacesCache(flags *genericclioptions.ConfigFlags, namespace string) *[]apiv1.Endpoints {
-	allEndpoints, _ := endpointsCache[""]
+	allEndpoints := endpointsCache[""]
 	if allEndpoints != nil {
 		endpoints := make([]apiv1.Endpoints, 0)
 		for _, thisEndpoints := range *allEndpoints {
@@ -238,7 +257,31 @@ func getPods(flags *genericclioptions.ConfigFlags) ([]apiv1.Pod, error) {
 		return make([]apiv1.Pod, 0), err
 	}
 
-	pods, err := api.Pods(namespace).List(metav1.ListOptions{})
+	pods, err := api.Pods(namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return make([]apiv1.Pod, 0), err
+	}
+
+	return pods.Items, nil
+}
+
+func getLabeledPods(flags *genericclioptions.ConfigFlags, label string) ([]apiv1.Pod, error) {
+	namespace := util.GetNamespace(flags)
+
+	rawConfig, err := flags.ToRESTConfig()
+	if err != nil {
+		return make([]apiv1.Pod, 0), err
+	}
+
+	api, err := corev1.NewForConfig(rawConfig)
+	if err != nil {
+		return make([]apiv1.Pod, 0), err
+	}
+
+	pods, err := api.Pods(namespace).List(context.TODO(), metav1.ListOptions{
+		LabelSelector: label,
+	})
+
 	if err != nil {
 		return make([]apiv1.Pod, 0), err
 	}
@@ -275,7 +318,7 @@ func getServices(flags *genericclioptions.ConfigFlags) ([]apiv1.Service, error) 
 		return make([]apiv1.Service, 0), err
 	}
 
-	services, err := api.Services(namespace).List(metav1.ListOptions{})
+	services, err := api.Services(namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
 		return make([]apiv1.Service, 0), err
 	}

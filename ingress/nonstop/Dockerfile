@@ -1,4 +1,4 @@
-FROM golang:1.12.10-stretch
+FROM golang:1.13.15-stretch
 WORKDIR /go/src/websample
 COPY . .
 RUN go install

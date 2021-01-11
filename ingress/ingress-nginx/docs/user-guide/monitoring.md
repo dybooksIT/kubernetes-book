@@ -21,12 +21,6 @@ Running the following command deploys prometheus in Kubernetes:
 
 ```console
 kubectl apply --kustomize github.com/kubernetes/ingress-nginx/deploy/prometheus/
-serviceaccount/prometheus-server created
-role.rbac.authorization.k8s.io/prometheus-server created
-rolebinding.rbac.authorization.k8s.io/prometheus-server created
-configmap/prometheus-configuration-bc6bcg7b65 created
-service/prometheus-server created
-deployment.apps/prometheus-server created
 ```
 
 ### Prometheus Dashboard
@@ -80,6 +74,12 @@ According to the above example, this URL will be http://10.192.0.3:31086
 
 The username and password is `admin`
 
-After the login you can import the Grafana dashboard from _https://github.com/kubernetes/ingress-nginx/tree/master/deploy/grafana/dashboards_
+After the login you can import the Grafana dashboard from [official dashboards](https://github.com/kubernetes/ingress-nginx/tree/master/deploy/grafana/dashboards)
 
 ![Dashboard](../images/grafana.png)
+
+## Caveats
+
+### Wildcard ingresses
+
+By default request metrics are labeled with the hostname. When you have a wildcard domain ingress, then there will be no metrics for that ingress (to prevent the metrics from exploding in cardinality). To get metrics in this case you need to run the ingress controller with `--metrics-per-host=false` (you will lose labeling by hostname, but still have labeling by ingress).

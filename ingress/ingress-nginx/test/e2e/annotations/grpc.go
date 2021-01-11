@@ -21,10 +21,9 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-
 	pb "github.com/moul/pb/grpcbin/go-grpc"
+	"github.com/onsi/ginkgo"
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -36,10 +35,10 @@ import (
 	"k8s.io/ingress-nginx/test/e2e/framework"
 )
 
-var _ = framework.IngressNginxDescribe("Annotations - GRPC", func() {
+var _ = framework.DescribeAnnotation("backend-protocol - GRPC", func() {
 	f := framework.NewDefaultFramework("grpc")
 
-	It("should use grpc_pass in the configuration file", func() {
+	ginkgo.It("should use grpc_pass in the configuration file", func() {
 		f.NewGRPCFortuneTellerDeployment()
 
 		host := "grpc"
@@ -48,32 +47,34 @@ var _ = framework.IngressNginxDescribe("Annotations - GRPC", func() {
 			"nginx.ingress.kubernetes.io/backend-protocol": "GRPC",
 		}
 
-		ing := framework.NewSingleIngress(host, "/", host, f.Namespace, "fortune-teller", 50051, &annotations)
+		ing := framework.NewSingleIngress(host, "/", host, f.Namespace, "fortune-teller", 50051, annotations)
 		f.EnsureIngress(ing)
 
 		f.WaitForNginxServer(host,
 			func(server string) bool {
-				return Expect(server).Should(ContainSubstring(fmt.Sprintf("server_name %v", host)))
+				return strings.Contains(server, fmt.Sprintf("server_name %v", host))
 			})
 
 		f.WaitForNginxServer(host,
 			func(server string) bool {
-				return Expect(server).Should(ContainSubstring("grpc_pass")) &&
-					Expect(server).Should(ContainSubstring("grpc_set_header")) &&
-					Expect(server).ShouldNot(ContainSubstring("proxy_pass"))
+				return strings.Contains(server, "grpc_pass") &&
+					strings.Contains(server, "grpc_set_header") &&
+					!strings.Contains(server, "proxy_pass")
 			})
 	})
 
-	It("should return OK for service with backend protocol GRPC", func() {
+	ginkgo.It("should return OK for service with backend protocol GRPC", func() {
+		f.NewGRPCBinDeployment()
+
 		host := "echo"
 
 		svc := &core.Service{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "grpcbin",
+				Name:      "grpcbin-test",
 				Namespace: f.Namespace,
 			},
 			Spec: corev1.ServiceSpec{
-				ExternalName: "grpcb.in",
+				ExternalName: fmt.Sprintf("grpcbin.%v.svc.cluster.local", f.Namespace),
 				Type:         corev1.ServiceTypeExternalName,
 				Ports: []corev1.ServicePort{
 					{
@@ -87,11 +88,11 @@ var _ = framework.IngressNginxDescribe("Annotations - GRPC", func() {
 		}
 		f.EnsureService(svc)
 
-		annotations := &map[string]string{
+		annotations := map[string]string{
 			"nginx.ingress.kubernetes.io/backend-protocol": "GRPC",
 		}
 
-		ing := framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, f.Namespace, "grpcbin", 9000, annotations)
+		ing := framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, f.Namespace, "grpcbin-test", 9000, annotations)
 
 		f.EnsureIngress(ing)
 
@@ -114,23 +115,24 @@ var _ = framework.IngressNginxDescribe("Annotations - GRPC", func() {
 		ctx := context.Background()
 
 		res, err := client.HeadersUnary(ctx, &pb.EmptyMessage{})
-		Expect(err).Should(BeNil())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
 		metadata := res.GetMetadata()
-		Expect(metadata["x-original-uri"].Values[0]).Should(Equal("/grpcbin.GRPCBin/HeadersUnary"))
-		Expect(metadata["content-type"].Values[0]).Should(Equal("application/grpc"))
+		assert.Equal(ginkgo.GinkgoT(), metadata["content-type"].Values[0], "application/grpc")
 	})
 
-	It("should return OK for service with backend protocol GRPCS", func() {
+	ginkgo.It("should return OK for service with backend protocol GRPCS", func() {
+		f.NewGRPCBinDeployment()
+
 		host := "echo"
 
 		svc := &core.Service{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "grpcbin",
+				Name:      "grpcbin-test",
 				Namespace: f.Namespace,
 			},
 			Spec: corev1.ServiceSpec{
-				ExternalName: "grpcb.in",
+				ExternalName: fmt.Sprintf("grpcbin.%v.svc.cluster.local", f.Namespace),
 				Type:         corev1.ServiceTypeExternalName,
 				Ports: []corev1.ServicePort{
 					{
@@ -144,17 +146,17 @@ var _ = framework.IngressNginxDescribe("Annotations - GRPC", func() {
 		}
 		f.EnsureService(svc)
 
-		annotations := &map[string]string{
+		annotations := map[string]string{
 			"nginx.ingress.kubernetes.io/backend-protocol": "GRPCS",
-			"nginx.ingress.kubernetes.io/configuration-snippet": `
+			"nginx.ingress.kubernetes.io/configuration-snippet": fmt.Sprintf(`
 			   # without this setting NGINX sends echo instead
-			   grpc_ssl_name      		grpcb.in;
+			   grpc_ssl_name      		grpcbin.%v.svc.cluster.local;
 			   grpc_ssl_server_name		on;
 			   grpc_ssl_ciphers 		HIGH:!aNULL:!MD5;
-			`,
+			`, f.Namespace),
 		}
 
-		ing := framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, f.Namespace, "grpcbin", 9001, annotations)
+		ing := framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, f.Namespace, "grpcbin-test", 9001, annotations)
 		f.EnsureIngress(ing)
 
 		f.WaitForNginxServer(host,
@@ -176,10 +178,9 @@ var _ = framework.IngressNginxDescribe("Annotations - GRPC", func() {
 		ctx := context.Background()
 
 		res, err := client.HeadersUnary(ctx, &pb.EmptyMessage{})
-		Expect(err).Should(BeNil())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
 		metadata := res.GetMetadata()
-		Expect(metadata["x-original-uri"].Values[0]).Should(Equal("/grpcbin.GRPCBin/HeadersUnary"))
-		Expect(metadata["content-type"].Values[0]).Should(Equal("application/grpc"))
+		assert.Equal(ginkgo.GinkgoT(), metadata["content-type"].Values[0], "application/grpc")
 	})
 })

@@ -18,11 +18,10 @@ package authreq
 
 import (
 	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	networking "k8s.io/api/networking/v1beta1"
 
@@ -36,14 +35,16 @@ import (
 type Config struct {
 	URL string `json:"url"`
 	// Host contains the hostname defined in the URL
-	Host              string   `json:"host"`
-	SigninURL         string   `json:"signinUrl"`
-	Method            string   `json:"method"`
-	ResponseHeaders   []string `json:"responseHeaders,omitempty"`
-	RequestRedirect   string   `json:"requestRedirect"`
-	AuthSnippet       string   `json:"authSnippet"`
-	AuthCacheKey      string   `json:"authCacheKey"`
-	AuthCacheDuration []string `json:"authCacheDuration"`
+	Host                   string            `json:"host"`
+	SigninURL              string            `json:"signinUrl"`
+	SigninURLRedirectParam string            `json:"signinUrlRedirectParam,omitempty"`
+	Method                 string            `json:"method"`
+	ResponseHeaders        []string          `json:"responseHeaders,omitempty"`
+	RequestRedirect        string            `json:"requestRedirect"`
+	AuthSnippet            string            `json:"authSnippet"`
+	AuthCacheKey           string            `json:"authCacheKey"`
+	AuthCacheDuration      []string          `json:"authCacheDuration"`
+	ProxySetHeaders        map[string]string `json:"proxySetHeaders,omitempty"`
 }
 
 // DefaultCacheDuration is the fallback value if no cache duration is provided
@@ -64,6 +65,9 @@ func (e1 *Config) Equal(e2 *Config) bool {
 		return false
 	}
 	if e1.SigninURL != e2.SigninURL {
+		return false
+	}
+	if e1.SigninURLRedirectParam != e2.SigninURLRedirectParam {
 		return false
 	}
 	if e1.Method != e2.Method {
@@ -158,9 +162,9 @@ func (a authReq) Parse(ing *networking.Ingress) (interface{}, error) {
 		return nil, err
 	}
 
-	authURL, message := ParseStringToURL(urlString)
-	if authURL == nil {
-		return nil, ing_errors.NewLocationDenied(message)
+	authURL, err := parser.StringToURL(urlString)
+	if err != nil {
+		return nil, ing_errors.InvalidContent{Name: err.Error()}
 	}
 
 	authMethod, _ := parser.GetStringAnnotation("auth-method", ing)
@@ -171,17 +175,22 @@ func (a authReq) Parse(ing *networking.Ingress) (interface{}, error) {
 	// Optional Parameters
 	signIn, err := parser.GetStringAnnotation("auth-signin", ing)
 	if err != nil {
-		klog.V(3).Infof("auth-signin annotation is undefined and will not be set")
+		klog.V(3).InfoS("auth-signin annotation is undefined and will not be set")
+	}
+
+	signInRedirectParam, err := parser.GetStringAnnotation("auth-signin-redirect-param", ing)
+	if err != nil {
+		klog.V(3).Infof("auth-signin-redirect-param annotation is undefined and will not be set")
 	}
 
 	authSnippet, err := parser.GetStringAnnotation("auth-snippet", ing)
 	if err != nil {
-		klog.V(3).Infof("auth-snippet annotation is undefined and will not be set")
+		klog.V(3).InfoS("auth-snippet annotation is undefined and will not be set")
 	}
 
 	authCacheKey, err := parser.GetStringAnnotation("auth-cache-key", ing)
 	if err != nil {
-		klog.V(3).Infof("auth-cache-key annotation is undefined and will not be set")
+		klog.V(3).InfoS("auth-cache-key annotation is undefined and will not be set")
 	}
 
 	durstr, _ := parser.GetStringAnnotation("auth-cache-duration", ing)
@@ -205,38 +214,43 @@ func (a authReq) Parse(ing *networking.Ingress) (interface{}, error) {
 		}
 	}
 
+	proxySetHeaderMap, err := parser.GetStringAnnotation("auth-proxy-set-headers", ing)
+	if err != nil {
+		klog.V(3).InfoS("auth-set-proxy-headers annotation is undefined and will not be set")
+	}
+
+	var proxySetHeaders map[string]string
+
+	if proxySetHeaderMap != "" {
+		proxySetHeadersMapContents, err := a.r.GetConfigMap(proxySetHeaderMap)
+		if err != nil {
+			return nil, ing_errors.NewLocationDenied(fmt.Sprintf("unable to find configMap %q", proxySetHeaderMap))
+		}
+
+		for header := range proxySetHeadersMapContents.Data {
+			if !ValidHeader(header) {
+				return nil, ing_errors.NewLocationDenied("invalid proxy-set-headers in configmap")
+			}
+		}
+
+		proxySetHeaders = proxySetHeadersMapContents.Data
+	}
+
 	requestRedirect, _ := parser.GetStringAnnotation("auth-request-redirect", ing)
 
 	return &Config{
-		URL:               urlString,
-		Host:              authURL.Hostname(),
-		SigninURL:         signIn,
-		Method:            authMethod,
-		ResponseHeaders:   responseHeaders,
-		RequestRedirect:   requestRedirect,
-		AuthSnippet:       authSnippet,
-		AuthCacheKey:      authCacheKey,
-		AuthCacheDuration: authCacheDuration,
+		URL:                    urlString,
+		Host:                   authURL.Hostname(),
+		SigninURL:              signIn,
+		SigninURLRedirectParam: signInRedirectParam,
+		Method:                 authMethod,
+		ResponseHeaders:        responseHeaders,
+		RequestRedirect:        requestRedirect,
+		AuthSnippet:            authSnippet,
+		AuthCacheKey:           authCacheKey,
+		AuthCacheDuration:      authCacheDuration,
+		ProxySetHeaders:        proxySetHeaders,
 	}, nil
-}
-
-// ParseStringToURL parses the provided string into URL and returns error
-// message in case of failure
-func ParseStringToURL(input string) (*url.URL, string) {
-
-	parsedURL, err := url.Parse(input)
-	if err != nil {
-		return nil, fmt.Sprintf("%v is not a valid URL: %v", input, err)
-	}
-	if parsedURL.Scheme == "" {
-		return nil, "url scheme is empty."
-	} else if parsedURL.Host == "" {
-		return nil, "url host is empty."
-	} else if strings.Contains(parsedURL.Host, "..") {
-		return nil, "invalid url host."
-	}
-	return parsedURL, ""
-
 }
 
 // ParseStringToCacheDurations parses and validates the provided string

@@ -18,17 +18,22 @@ package parser
 
 import (
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
 	networking "k8s.io/api/networking/v1beta1"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"k8s.io/ingress-nginx/internal/ingress/errors"
 )
 
+// DefaultAnnotationsPrefix defines the common prefix used in the nginx ingress controller
+const DefaultAnnotationsPrefix = "nginx.ingress.kubernetes.io"
+
 var (
-	// AnnotationsPrefix defines the common prefix used in the nginx ingress controller
-	AnnotationsPrefix = "nginx.ingress.kubernetes.io"
+	// AnnotationsPrefix is the mutable attribute that the controller explicitly refers to
+	AnnotationsPrefix = DefaultAnnotationsPrefix
 )
 
 // IngressAnnotation has a method to parse annotations located in Ingress
@@ -129,4 +134,44 @@ func normalizeString(input string) string {
 	}
 
 	return strings.Join(trimmedContent, "\n")
+}
+
+var configmapAnnotations = sets.NewString(
+	"auth-proxy-set-header",
+	"fastcgi-params-configmap",
+)
+
+// AnnotationsReferencesConfigmap checks if at least one annotation in the Ingress rule
+// references a configmap.
+func AnnotationsReferencesConfigmap(ing *networking.Ingress) bool {
+	if ing == nil || len(ing.GetAnnotations()) == 0 {
+		return false
+	}
+
+	for name := range ing.GetAnnotations() {
+		if configmapAnnotations.Has(name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// StringToURL parses the provided string into URL and returns error
+// message in case of failure
+func StringToURL(input string) (*url.URL, error) {
+	parsedURL, err := url.Parse(input)
+	if err != nil {
+		return nil, fmt.Errorf("%v is not a valid URL: %v", input, err)
+	}
+
+	if parsedURL.Scheme == "" {
+		return nil, fmt.Errorf("url scheme is empty")
+	} else if parsedURL.Host == "" {
+		return nil, fmt.Errorf("url host is empty")
+	} else if strings.Contains(parsedURL.Host, "..") {
+		return nil, fmt.Errorf("invalid url host")
+	}
+
+	return parsedURL, nil
 }

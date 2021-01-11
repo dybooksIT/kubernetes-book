@@ -17,9 +17,8 @@ limitations under the License.
 package class
 
 import (
-	"k8s.io/klog"
-
 	networking "k8s.io/api/networking/v1beta1"
+	"k8s.io/ingress-nginx/internal/k8s"
 )
 
 const (
@@ -30,7 +29,7 @@ const (
 )
 
 var (
-	// DefaultClass defines the default class used in the nginx ingres controller
+	// DefaultClass defines the default class used in the nginx ingress controller
 	DefaultClass = "nginx"
 
 	// IngressClass sets the runtime ingress class to use
@@ -39,25 +38,27 @@ var (
 	IngressClass = "nginx"
 )
 
-// IsValid returns true if the given Ingress either doesn't specify
-// the ingress.class annotation, or it's set to the configured in the
-// ingress controller.
+// IsValid returns true if the given Ingress specify the ingress.class
+// annotation or IngressClassName resource for Kubernetes >= v1.18
 func IsValid(ing *networking.Ingress) bool {
+	// 1. with annotation or IngressClass
 	ingress, ok := ing.GetAnnotations()[IngressKey]
-	if !ok {
-		klog.V(3).Infof("annotation %v is not present in ingress %v/%v", IngressKey, ing.Namespace, ing.Name)
+	if !ok && ing.Spec.IngressClassName != nil {
+		ingress = *ing.Spec.IngressClassName
 	}
 
-	// we have 2 valid combinations
-	// 1 - ingress with default class | blank annotation on ingress
-	// 2 - ingress with specific class | same annotation on ingress
-	//
-	// and 2 invalid combinations
-	// 3 - ingress with default class | fixed annotation on ingress
-	// 4 - ingress with specific class | different annotation on ingress
-	if ingress == "" && IngressClass == DefaultClass {
+	// empty ingress and IngressClass equal default
+	if len(ingress) == 0 && IngressClass == DefaultClass {
 		return true
 	}
 
+	// k8s > v1.18.
+	// Processing may be redundant because k8s.IngressClass is obtained by IngressClass
+	// 3. without annotation and IngressClass. Check IngressClass
+	if k8s.IngressClass != nil {
+		return ingress == k8s.IngressClass.Name
+	}
+
+	// 4. with IngressClass
 	return ingress == IngressClass
 }

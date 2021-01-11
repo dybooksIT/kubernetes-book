@@ -13,7 +13,8 @@ local tostring = tostring
 
 local _M = {}
 local CACHE_SIZE = 10000
-local MAXIMUM_TTL_VALUE = 2147483647 -- maximum value according to https://tools.ietf.org/html/rfc2181
+-- maximum value according to https://tools.ietf.org/html/rfc2181
+local MAXIMUM_TTL_VALUE = 2147483647
 -- for every host we will try two queries for the following types with the order set here
 local QTYPES_TO_CHECK = { resolver.TYPE_A, resolver.TYPE_AAAA }
 
@@ -53,15 +54,14 @@ local function a_records_and_min_ttl(answers)
 end
 
 local function resolve_host_for_qtype(r, host, qtype)
-  ngx_log(ngx_INFO, string_format("resolving %s with qtype %s", host, qtype))
-
   local answers, err = r:query(host, { qtype = qtype }, {})
   if not answers then
     return nil, -1, err
   end
 
   if answers.errcode then
-    return nil, -1, string_format("server returned error code: %s: %s", answers.errcode, answers.errstr)
+    return nil, -1, string_format("server returned error code: %s: %s",
+      answers.errcode, answers.errstr)
   end
 
   local addresses, ttl = a_records_and_min_ttl(answers)
@@ -118,7 +118,8 @@ function _M.lookup(host)
       return addresses
     end
 
-    ngx_log(ngx_ERR, "failed to query the DNS server:\n" .. table_concat(dns_errors, "\n"))
+    ngx_log(ngx_ERR, "failed to query the DNS server for ",
+      host, ":\n", table_concat(dns_errors, "\n"))
 
     return { host }
   end
@@ -137,7 +138,8 @@ function _M.lookup(host)
   end
 
   for i = search_start, search_end, 1 do
-    local new_host = resolv_conf.search[i] and string_format("%s.%s", host, resolv_conf.search[i]) or host
+    local new_host = resolv_conf.search[i] and
+      string_format("%s.%s", host, resolv_conf.search[i]) or host
 
     addresses, ttl, dns_errors = resolve_host(r, new_host)
     if addresses then
@@ -147,14 +149,13 @@ function _M.lookup(host)
   end
 
   if #dns_errors > 0 then
-    ngx_log(ngx_ERR, "failed to query the DNS server:\n" .. table_concat(dns_errors, "\n"))
+    ngx_log(ngx_ERR, "failed to query the DNS server for ",
+      host, ":\n", table_concat(dns_errors, "\n"))
   end
 
   return { host }
 end
 
-if _TEST then
-  _M._cache = cache
-end
+setmetatable(_M, {__index = { _cache = cache }})
 
 return _M

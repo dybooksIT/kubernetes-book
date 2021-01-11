@@ -18,42 +18,33 @@ package loadbalance
 
 import (
 	"strings"
-	"time"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
+	"github.com/onsi/ginkgo"
+	"github.com/stretchr/testify/assert"
 
 	"k8s.io/ingress-nginx/test/e2e/framework"
 )
 
-const (
-	waitForLuaSync = 5 * time.Second
-)
-
-var _ = framework.IngressNginxDescribe("Load Balance - Configmap value", func() {
+var _ = framework.DescribeSetting("[Load Balancer] load-balance", func() {
 	f := framework.NewDefaultFramework("lb-configmap")
 
-	BeforeEach(func() {
-		f.NewEchoDeploymentWithReplicas(1)
+	ginkgo.BeforeEach(func() {
+		f.NewEchoDeployment()
 	})
 
-	AfterEach(func() {
-	})
-
-	It("should apply the configmap load-balance setting", func() {
+	ginkgo.It("should apply the configmap load-balance setting", func() {
 		host := "load-balance.com"
 
 		f.UpdateNginxConfigMapData("load-balance", "ewma")
 
-		f.EnsureIngress(framework.NewSingleIngress(host, "/", host, f.Namespace, "http-svc", 80, nil))
+		f.EnsureIngress(framework.NewSingleIngress(host, "/", host, f.Namespace, framework.EchoService, 80, nil))
 		f.WaitForNginxServer(host,
 			func(server string) bool {
 				return strings.Contains(server, "server_name load-balance.com")
 			})
-		time.Sleep(waitForLuaSync)
 
-		algorithm, err := f.GetLbAlgorithm("http-svc", 80)
-		Expect(err).Should(BeNil())
-		Expect(algorithm).Should(Equal("ewma"))
+		algorithm, err := f.GetLbAlgorithm(framework.EchoService, 80)
+		assert.Nil(ginkgo.GinkgoT(), err)
+		assert.Equal(ginkgo.GinkgoT(), algorithm, "ewma")
 	})
 })

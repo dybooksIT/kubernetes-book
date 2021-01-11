@@ -17,26 +17,27 @@ limitations under the License.
 package settings
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"strings"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-
+	"github.com/onsi/ginkgo"
+	"github.com/stretchr/testify/assert"
 	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/ingress-nginx/test/e2e/framework"
 )
 
-var _ = framework.IngressNginxDescribe("default-ssl-certificate", func() {
+var _ = framework.IngressNginxDescribe("[SSL] [Flag] default-ssl-certificate", func() {
 	f := framework.NewDefaultFramework("default-ssl-certificate")
 	var tlsConfig *tls.Config
 	secretName := "my-custom-cert"
-	service := "http-svc"
+	service := framework.EchoService
 	port := 80
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		f.NewEchoDeploymentWithReplicas(1)
 
 		var err error
@@ -44,39 +45,39 @@ var _ = framework.IngressNginxDescribe("default-ssl-certificate", func() {
 			[]string{"*"},
 			secretName,
 			f.Namespace)
-		Expect(err).NotTo(HaveOccurred())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
-		framework.UpdateDeployment(f.KubeClientSet, f.Namespace, "nginx-ingress-controller", 1,
-			func(deployment *appsv1.Deployment) error {
-				args := deployment.Spec.Template.Spec.Containers[0].Args
-				args = append(args, "--default-ssl-certificate=$(POD_NAMESPACE)/"+secretName)
-				deployment.Spec.Template.Spec.Containers[0].Args = args
-				_, err := f.KubeClientSet.AppsV1().Deployments(f.Namespace).Update(deployment)
+		err = f.UpdateIngressControllerDeployment(func(deployment *appsv1.Deployment) error {
+			args := deployment.Spec.Template.Spec.Containers[0].Args
+			args = append(args, "--default-ssl-certificate=$(POD_NAMESPACE)/"+secretName)
+			deployment.Spec.Template.Spec.Containers[0].Args = args
+			_, err := f.KubeClientSet.AppsV1().Deployments(f.Namespace).Update(context.TODO(), deployment, metav1.UpdateOptions{})
 
-				return err
-			})
+			return err
+		})
+		assert.Nil(ginkgo.GinkgoT(), err, "updating ingress controller deployment flags")
 
 		// this asserts that it configures default custom ssl certificate without an ingress at all
 		framework.WaitForTLS(f.GetURL(framework.HTTPS), tlsConfig)
 	})
 
-	It("uses default ssl certificate for catch-all ingress", func() {
+	ginkgo.It("uses default ssl certificate for catch-all ingress", func() {
 		ing := framework.NewSingleCatchAllIngress("catch-all", f.Namespace, service, port, nil)
 		f.EnsureIngress(ing)
 
-		By("making sure new ingress is deployed")
+		ginkgo.By("making sure new ingress is deployed")
 		expectedConfig := fmt.Sprintf(`set $proxy_upstream_name "%v-%v-%v";`, f.Namespace, service, port)
 		f.WaitForNginxServer("_", func(cfg string) bool {
 			return strings.Contains(cfg, expectedConfig)
 		})
 
-		By("making sure new ingress is responding")
+		ginkgo.By("making sure new ingress is responding")
 
-		By("making sure the configured default ssl certificate is being used")
+		ginkgo.By("making sure the configured default ssl certificate is being used")
 		framework.WaitForTLS(f.GetURL(framework.HTTPS), tlsConfig)
 	})
 
-	It("uses default ssl certificate for host based ingress when configured certificate does not match host", func() {
+	ginkgo.It("uses default ssl certificate for host based ingress when configured certificate does not match host", func() {
 		host := "foo"
 
 		ing := f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, f.Namespace, service, port, nil))
@@ -84,15 +85,15 @@ var _ = framework.IngressNginxDescribe("default-ssl-certificate", func() {
 			[]string{"not.foo"},
 			ing.Spec.TLS[0].SecretName,
 			ing.Namespace)
-		Expect(err).NotTo(HaveOccurred())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
-		By("making sure new ingress is deployed")
+		ginkgo.By("making sure new ingress is deployed")
 		expectedConfig := fmt.Sprintf(`set $proxy_upstream_name "%v-%v-%v";`, f.Namespace, service, port)
 		f.WaitForNginxServer(host, func(cfg string) bool {
 			return strings.Contains(cfg, expectedConfig)
 		})
 
-		By("making sure the configured default ssl certificate is being used")
+		ginkgo.By("making sure the configured default ssl certificate is being used")
 		framework.WaitForTLS(f.GetURL(framework.HTTPS), tlsConfig)
 	})
 })

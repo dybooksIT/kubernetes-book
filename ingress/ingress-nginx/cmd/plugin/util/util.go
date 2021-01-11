@@ -29,8 +29,8 @@ import (
 
 // The default deployment and service names for ingress-nginx
 const (
-	DefaultIngressDeploymentName = "nginx-ingress-controller"
-	DefaultIngressServiceName    = "ingress-nginx"
+	DefaultIngressDeploymentName = "ingress-nginx-controller"
+	DefaultIngressServiceName    = "ingress-nginx-controller"
 )
 
 // IssuePrefix is the github url that we can append an issue number to to link to it
@@ -117,6 +117,13 @@ func AddPodFlag(cmd *cobra.Command) *string {
 func AddDeploymentFlag(cmd *cobra.Command) *string {
 	v := ""
 	cmd.Flags().StringVar(&v, "deployment", DefaultIngressDeploymentName, "The name of the ingress-nginx deployment")
+	return &v
+}
+
+// AddSelectorFlag adds a --selector flag to a cobra command
+func AddSelectorFlag(cmd *cobra.Command) *string {
+	v := ""
+	cmd.Flags().StringVarP(&v, "selector", "l", "", "Selector (label query) of the ingress-nginx pod")
 	return &v
 }
 

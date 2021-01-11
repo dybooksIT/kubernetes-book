@@ -1,3 +1,5 @@
+local ipairs = ipairs
+
 local _M = {}
 
 -- splits strings into host and port
@@ -14,6 +16,12 @@ function _M.get_first_value(var)
   local t = _M.split_upstream_var(var) or {}
   if #t == 0 then return nil end
   return t[1]
+end
+
+function _M.get_last_value(var)
+  local t = _M.split_upstream_var(var) or {}
+  if #t == 0 then return nil end
+  return t[#t]
 end
 
 -- http://nginx.org/en/docs/http/ngx_http_upstream_module.html#example
@@ -34,7 +42,8 @@ function _M.split_upstream_var(var)
   return t
 end
 
--- Splits an NGINX $upstream_addr and returns an array of tables with a `host` and `port` key-value pair.
+-- Splits an NGINX $upstream_addr and returns an array of tables
+-- with a `host` and `port` key-value pair.
 function _M.split_upstream_addr(addrs_str)
   if not addrs_str then
     return nil, nil

@@ -26,7 +26,7 @@ declare -a mandatory
 mandatory=(
   PKG
   ARCH
-  GIT_COMMIT
+  COMMIT_SHA
   REPO_INFO
   TAG
 )
@@ -54,13 +54,14 @@ function build_for_arch(){
 
   env GOOS="${os}" GOARCH="${arch}" go build \
     "${GOBUILD_FLAGS}" \
-    -ldflags "-s -w \
+    -trimpath -ldflags="-buildid= -w -s" \
       -X ${PKG}/version.RELEASE=${TAG} \
-      -X ${PKG}/version.COMMIT=${GIT_COMMIT} \
+      -X ${PKG}/version.COMMIT=${COMMIT_SHA} \
       -X ${PKG}/version.REPO=${REPO_INFO}" \
     -o "${release}/kubectl-ingress_nginx${extension}" "${PKG}/cmd/plugin"
 
-    tar -C "${release}" -zcvf "${release}/kubectl-ingress_nginx-${os}-${arch}.tar.gz" "kubectl-ingress_nginx${extension}"
+    cp LICENSE ${release}
+    tar -C "${release}" -zcvf "${release}/kubectl-ingress_nginx-${os}-${arch}.tar.gz" "kubectl-ingress_nginx${extension}" LICENSE
     rm "${release}/kubectl-ingress_nginx${extension}"
     hash=$(sha256sum "${release}/kubectl-ingress_nginx-${os}-${arch}.tar.gz" | awk '{ print $1 }')
     sed -i "s/%%%shasum_${os}_${arch}%%%/${hash}/g" "${release}/ingress-nginx.yaml"

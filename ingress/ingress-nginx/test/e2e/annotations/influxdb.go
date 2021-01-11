@@ -18,34 +18,34 @@ package annotations
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-
 	jsoniter "github.com/json-iterator/go"
-	"github.com/parnurzeal/gorequest"
-
+	"github.com/onsi/ginkgo"
+	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
+
 	"k8s.io/ingress-nginx/test/e2e/framework"
 )
 
-var _ = framework.IngressNginxDescribe("Annotations - influxdb", func() {
+var _ = framework.DescribeAnnotation("influxdb-*", func() {
 	f := framework.NewDefaultFramework("influxdb")
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		f.NewInfluxDBDeployment()
 		f.NewEchoDeployment()
 	})
 
-	Context("when influxdb is enabled", func() {
-		It("should send the request metric to the influxdb server", func() {
+	ginkgo.Context("when influxdb is enabled", func() {
+		ginkgo.It("should send the request metric to the influxdb server", func() {
 			ifs := createInfluxDBService(f)
 
 			// Ingress configured with InfluxDB annotations
@@ -53,8 +53,8 @@ var _ = framework.IngressNginxDescribe("Annotations - influxdb", func() {
 			createInfluxDBIngress(
 				f,
 				host,
-				"http-svc",
-				8080,
+				framework.EchoService,
+				80,
 				map[string]string{
 					"nginx.ingress.kubernetes.io/enable-influxdb":      "true",
 					"nginx.ingress.kubernetes.io/influxdb-host":        ifs.Spec.ClusterIP,
@@ -66,34 +66,32 @@ var _ = framework.IngressNginxDescribe("Annotations - influxdb", func() {
 
 			// Do a request to the echo server ingress that sends metrics
 			// to the InfluxDB backend.
-			res, _, errs := gorequest.New().
-				Get(f.GetURL(framework.HTTP)).
-				Set("Host", host).
-				End()
+			f.HTTPTestClient().
+				GET("/").
+				WithHeader("Host", host).
+				Expect().
+				Status(http.StatusOK)
 
-			Expect(len(errs)).Should(Equal(0))
-			Expect(res.StatusCode).Should(Equal(http.StatusOK))
-
-			time.Sleep(5 * time.Second)
+			framework.Sleep(10 * time.Second)
 
 			var measurements string
 			var err error
 
-			err = wait.PollImmediate(time.Second, time.Minute, func() (bool, error) {
+			err = wait.Poll(time.Second, time.Minute, func() (bool, error) {
 				measurements, err = extractInfluxDBMeasurements(f)
 				if err != nil {
 					return false, nil
 				}
 				return true, nil
 			})
-			Expect(err).NotTo(HaveOccurred())
+			assert.Nil(ginkgo.GinkgoT(), err)
 
 			var results map[string][]map[string]interface{}
-			jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(measurements), &results)
+			_ = jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(measurements), &results)
 
-			Expect(len(measurements)).ShouldNot(Equal(0))
+			assert.NotEqual(ginkgo.GinkgoT(), len(measurements), 0)
 			for _, elem := range results["results"] {
-				Expect(len(elem)).ShouldNot(Equal(0))
+				assert.NotEqual(ginkgo.GinkgoT(), len(elem), 0)
 			}
 		})
 	})
@@ -102,7 +100,7 @@ var _ = framework.IngressNginxDescribe("Annotations - influxdb", func() {
 func createInfluxDBService(f *framework.Framework) *corev1.Service {
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "inflxudb-svc",
+			Name:      "influxdb",
 			Namespace: f.Namespace,
 		},
 		Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{
@@ -114,7 +112,7 @@ func createInfluxDBService(f *framework.Framework) *corev1.Service {
 			},
 		},
 			Selector: map[string]string{
-				"app": "influxdb-svc",
+				"app": "influxdb",
 			},
 		},
 	}
@@ -123,18 +121,18 @@ func createInfluxDBService(f *framework.Framework) *corev1.Service {
 }
 
 func createInfluxDBIngress(f *framework.Framework, host, service string, port int, annotations map[string]string) {
-	ing := framework.NewSingleIngress(host, "/", host, f.Namespace, service, port, &annotations)
+	ing := framework.NewSingleIngress(host, "/", host, f.Namespace, service, port, annotations)
 	f.EnsureIngress(ing)
 
 	f.WaitForNginxServer(host,
 		func(server string) bool {
-			return Expect(server).Should(ContainSubstring(fmt.Sprintf("server_name %v", host)))
+			return strings.Contains(server, fmt.Sprintf("server_name %v", host))
 		})
 }
 
 func extractInfluxDBMeasurements(f *framework.Framework) (string, error) {
-	l, err := f.KubeClientSet.CoreV1().Pods(f.Namespace).List(metav1.ListOptions{
-		LabelSelector: "app=influxdb-svc",
+	l, err := f.KubeClientSet.CoreV1().Pods(f.Namespace).List(context.TODO(), metav1.ListOptions{
+		LabelSelector: "app=influxdb",
 	})
 	if err != nil {
 		return "", err

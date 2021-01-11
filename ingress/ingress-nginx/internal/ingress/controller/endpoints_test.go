@@ -83,7 +83,36 @@ func TestGetEndpoints(t *testing.T) {
 			&corev1.Service{
 				Spec: corev1.ServiceSpec{
 					Type:         corev1.ServiceTypeExternalName,
-					ExternalName: "www.10.0.0.1.xip.io",
+					ExternalName: "www.google.com",
+					Ports: []corev1.ServicePort{
+						{
+							Name:       "default",
+							TargetPort: intstr.FromInt(443),
+						},
+					},
+				},
+			},
+			&corev1.ServicePort{
+				Name:       "default",
+				TargetPort: intstr.FromInt(80),
+			},
+			corev1.ProtocolTCP,
+			func(string) (*corev1.Endpoints, error) {
+				return &corev1.Endpoints{}, nil
+			},
+			[]ingress.Endpoint{
+				{
+					Address: "www.google.com",
+					Port:    "443",
+				},
+			},
+		},
+		{
+			"a service type ServiceTypeExternalName with an trailing dot ExternalName value should return one endpoints",
+			&corev1.Service{
+				Spec: corev1.ServiceSpec{
+					Type:         corev1.ServiceTypeExternalName,
+					ExternalName: "www.google.com.",
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "default",
@@ -102,17 +131,17 @@ func TestGetEndpoints(t *testing.T) {
 			},
 			[]ingress.Endpoint{
 				{
-					Address: "www.10.0.0.1.xip.io",
-					Port:    "80",
+					Address: "www.google.com",
+					Port:    "443",
 				},
 			},
 		},
 		{
-			"a service type ServiceTypeExternalName with an invalid ExternalName value should return one endpoint",
+			"a service type ServiceTypeExternalName with an invalid ExternalName value should no return endpoints",
 			&corev1.Service{
 				Spec: corev1.ServiceSpec{
 					Type:         corev1.ServiceTypeExternalName,
-					ExternalName: "foo.bar",
+					ExternalName: "1#invalid.hostname",
 					Ports: []corev1.ServicePort{
 						{
 							Name:       "default",

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"regexp"
+	"strings"
 
 	"github.com/pkg/errors"
 	api "k8s.io/api/core/v1"
@@ -39,14 +40,20 @@ var (
 	AuthDirectory = "/etc/ingress-controller/auth"
 )
 
+const (
+	fileAuth = "auth-file"
+	mapAuth  = "auth-map"
+)
+
 // Config returns authentication configuration for an Ingress rule
 type Config struct {
-	Type    string `json:"type"`
-	Realm   string `json:"realm"`
-	File    string `json:"file"`
-	Secured bool   `json:"secured"`
-	FileSHA string `json:"fileSha"`
-	Secret  string `json:"secret"`
+	Type       string `json:"type"`
+	Realm      string `json:"realm"`
+	File       string `json:"file"`
+	Secured    bool   `json:"secured"`
+	FileSHA    string `json:"fileSha"`
+	Secret     string `json:"secret"`
+	SecretType string `json:"secretType"`
 }
 
 // Equal tests for equality between two Config types
@@ -102,6 +109,12 @@ func (a auth) Parse(ing *networking.Ingress) (interface{}, error) {
 		return nil, ing_errors.NewLocationDenied("invalid authentication type")
 	}
 
+	var secretType string
+	secretType, err = parser.GetStringAnnotation("auth-secret-type", ing)
+	if err != nil {
+		secretType = fileAuth
+	}
+
 	s, err := parser.GetStringAnnotation("auth-secret", ing)
 	if err != nil {
 		return nil, ing_errors.LocationDenied{
@@ -130,25 +143,39 @@ func (a auth) Parse(ing *networking.Ingress) (interface{}, error) {
 
 	realm, _ := parser.GetStringAnnotation("auth-realm", ing)
 
-	passFile := fmt.Sprintf("%v/%v-%v.passwd", a.authDirectory, ing.GetNamespace(), ing.GetName())
-	err = dumpSecret(passFile, secret)
-	if err != nil {
-		return nil, err
+	passFilename := fmt.Sprintf("%v/%v-%v-%v.passwd", a.authDirectory, ing.GetNamespace(), ing.UID, secret.UID)
+
+	switch secretType {
+	case fileAuth:
+		err = dumpSecretAuthFile(passFilename, secret)
+		if err != nil {
+			return nil, err
+		}
+	case mapAuth:
+		err = dumpSecretAuthMap(passFilename, secret)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, ing_errors.LocationDenied{
+			Reason: errors.Wrap(err, "invalid auth-secret-type in annotation, must be 'auth-file' or 'auth-map'"),
+		}
 	}
 
 	return &Config{
-		Type:    at,
-		Realm:   realm,
-		File:    passFile,
-		Secured: true,
-		FileSHA: file.SHA1(passFile),
-		Secret:  name,
+		Type:       at,
+		Realm:      realm,
+		File:       passFilename,
+		Secured:    true,
+		FileSHA:    file.SHA1(passFilename),
+		Secret:     name,
+		SecretType: secretType,
 	}, nil
 }
 
 // dumpSecret dumps the content of a secret into a file
 // in the expected format for the specified authorization
-func dumpSecret(filename string, secret *api.Secret) error {
+func dumpSecretAuthFile(filename string, secret *api.Secret) error {
 	val, ok := secret.Data["auth"]
 	if !ok {
 		return ing_errors.LocationDenied{
@@ -157,6 +184,25 @@ func dumpSecret(filename string, secret *api.Secret) error {
 	}
 
 	err := ioutil.WriteFile(filename, val, file.ReadWriteByUser)
+	if err != nil {
+		return ing_errors.LocationDenied{
+			Reason: errors.Wrap(err, "unexpected error creating password file"),
+		}
+	}
+
+	return nil
+}
+
+func dumpSecretAuthMap(filename string, secret *api.Secret) error {
+	builder := &strings.Builder{}
+	for user, pass := range secret.Data {
+		builder.WriteString(user)
+		builder.WriteString(":")
+		builder.WriteString(string(pass))
+		builder.WriteString("\n")
+	}
+
+	err := ioutil.WriteFile(filename, []byte(builder.String()), file.ReadWriteByUser)
 	if err != nil {
 		return ing_errors.LocationDenied{
 			Reason: errors.Wrap(err, "unexpected error creating password file"),

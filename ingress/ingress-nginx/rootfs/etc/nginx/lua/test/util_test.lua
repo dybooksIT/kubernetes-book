@@ -1,36 +1,43 @@
-local original_ngx = ngx
-local function reset_ngx()
-  _G.ngx = original_ngx
-end
+local util
 
-local function mock_ngx(mock)
-  local _ngx = mock
-  setmetatable(_ngx, { __index = ngx })
-  _G.ngx = _ngx
-end
-
-describe("lua_ngx_var", function()
-  local util = require("util")
+describe("utility", function()
+  before_each(function()
+    ngx.var = { remote_addr = "192.168.1.1", [1] = "nginx/regexp/1/group/capturing" }
+    util = require_without_cache("util")
+  end)
 
   after_each(function()
     reset_ngx()
   end)
 
-  describe("lua_ngx_var", function()
-    before_each(function()
-      mock_ngx({ var = { remote_addr = "192.168.1.1", [1] = "nginx/regexp/1/group/capturing" } })
-    end)
+  describe("ngx_complex_value", function()
+
+    local ngx_complex_value = function(data)
+      local ret, err = util.parse_complex_value(data)
+      if err ~= nil then
+        return ""
+      end
+      return util.generate_var_value(ret)
+    end
 
     it("returns value of nginx var by key", function()
-      assert.equal("192.168.1.1", util.lua_ngx_var("$remote_addr"))
+      assert.equal("192.168.1.1", ngx_complex_value("$remote_addr"))
     end)
-
+ 
     it("returns value of nginx var when key is number", function()
-      assert.equal("nginx/regexp/1/group/capturing", util.lua_ngx_var("$1"))
+      assert.equal("nginx/regexp/1/group/capturing", ngx_complex_value("$1"))
     end)
 
-    it("returns nil when variable is not defined", function()
-      assert.equal(nil, util.lua_ngx_var("$foo_bar"))
+    it("returns value of nginx var by multiple variables", function()
+      assert.equal("192.168.1.1nginx/regexp/1/group/capturing", ngx_complex_value("$remote_addr$1"))
+    end)
+
+    it("returns value by the combination of variable and text value", function()
+      assert.equal("192.168.1.1-text-value", ngx_complex_value("${remote_addr}-text-value"))
+    end)
+
+    it("returns empty when variable is not defined", function()
+      assert.equal("", ngx_complex_value("$foo_bar"))
     end)
   end)
 

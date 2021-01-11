@@ -13,21 +13,61 @@
 # limitations under the License.
 
 
-FROM BASEIMAGE
-
-CROSS_BUILD_COPY qemu-ARCH-static /usr/bin/
-
-ENV PATH=$PATH:/usr/local/openresty/luajit/bin:/usr/local/openresty/nginx/sbin:/usr/local/openresty/bin
-
-# Add LuaRocks paths
-ENV LUA_PATH="/usr/local/openresty/site/lualib/?.ljbc;/usr/local/openresty/site/lualib/?/init.ljbc;/usr/local/openresty/lualib/?.ljbc;/usr/local/openresty/lualib/?/init.ljbc;/usr/local/openresty/site/lualib/?.lua;/usr/local/openresty/site/lualib/?/init.lua;/usr/local/openresty/lualib/?.lua;/usr/local/openresty/lualib/?/init.lua;./?.lua;/usr/local/openresty/luajit/share/luajit-2.1.0-beta3/?.lua;/usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/?/init.lua;/usr/local/openresty/luajit/share/lua/5.1/?.lua;/usr/local/openresty/luajit/share/lua/5.1/?/init.lua;/usr/local/lib/lua/?.lua"
-ENV LUA_CPATH="/usr/local/openresty/site/lualib/?.so;/usr/local/openresty/lualib/?.so;./?.so;/usr/local/lib/lua/5.1/?.so;/usr/local/openresty/luajit/lib/lua/5.1/?.so;/usr/local/lib/lua/5.1/loadall.so;/usr/local/openresty/luajit/lib/lua/5.1/?.so"
+FROM alpine:3.12 as builder
 
 COPY . /
 
-RUN clean-install bash
+RUN apk add -U bash \
+  && /build.sh
 
-RUN /build.sh
+# Use a multi-stage build
+FROM alpine:3.12
+
+ENV PATH=$PATH:/usr/local/luajit/bin:/usr/local/nginx/sbin:/usr/local/nginx/bin
+
+ENV LUA_PATH="/usr/local/share/luajit-2.1.0-beta3/?.lua;/usr/local/share/lua/5.1/?.lua;/usr/local/lib/lua/?.lua;;"
+ENV LUA_CPATH="/usr/local/lib/lua/?/?.so;/usr/local/lib/lua/?.so;;"
+
+COPY --from=builder /usr/local /usr/local
+COPY --from=builder /opt /opt
+COPY --from=builder /etc/nginx /etc/nginx
+
+RUN apk update \
+  && apk upgrade \
+  && apk add -U --no-cache \
+    bash \
+    openssl \
+    pcre \
+    zlib \
+    geoip \
+    curl ca-certificates \
+    patch \
+    yajl \
+    lmdb \
+    libxml2 \
+    libmaxminddb \
+    yaml-cpp \
+    dumb-init \
+    nano \
+    tzdata \
+  && ln -s /usr/local/nginx/sbin/nginx /sbin/nginx \
+  && addgroup -Sg 101 www-data \
+  && adduser -S -D -H -u 101 -h /usr/local/nginx \
+    -s /sbin/nologin -G www-data -g www-data www-data \
+  && bash -eu -c ' \
+  writeDirs=( \
+    /var/log/nginx \
+    /var/lib/nginx/body \
+    /var/lib/nginx/fastcgi \
+    /var/lib/nginx/proxy \
+    /var/lib/nginx/scgi \
+    /var/lib/nginx/uwsgi \
+    /var/log/audit \
+  ); \
+  for dir in "${writeDirs[@]}"; do \
+    mkdir -p ${dir}; \
+    chown -R www-data.www-data ${dir}; \
+  done'
 
 EXPOSE 80 443
 

@@ -22,43 +22,51 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-# temporal directory for the fake SSL certificate
-SSL_VOLUME=$(mktemp -d)
+# temporal directory for the /etc/ingress-controller directory
+INGRESS_VOLUME=$(mktemp -d)
+
+if [[ "$OSTYPE" == darwin* ]]; then
+  INGRESS_VOLUME=/private$INGRESS_VOLUME
+fi
 
 function cleanup {
-  rm -rf "${SSL_VOLUME}"
+  rm -rf "${INGRESS_VOLUME}"
 }
 trap cleanup EXIT
 
-E2E_IMAGE=quay.io/kubernetes-ingress-controller/e2e:v06262019-ecce3fd7b
+E2E_IMAGE=${E2E_IMAGE:-k8s.gcr.io/ingress-nginx/e2e-test-runner:v20210104-g81a8d5cd8@sha256:bfd55f589ea998f961825a9d09158d766cf621d1b8fc5d8c905aba07d9794e08}
 
 DOCKER_OPTS=${DOCKER_OPTS:-}
+DOCKER_IN_DOCKER_ENABLED=${DOCKER_IN_DOCKER_ENABLED:-}
 
 KUBE_ROOT=$(cd $(dirname "${BASH_SOURCE}")/.. && pwd -P)
 
 FLAGS=$@
 
 PKG=k8s.io/ingress-nginx
-ARCH=$(go env GOARCH)
-
-MINIKUBE_PATH=${HOME}/.minikube
-MINIKUBE_VOLUME="-v ${MINIKUBE_PATH}:${MINIKUBE_PATH}"
-if [ ! -d "${MINIKUBE_PATH}" ]; then
-  echo "Minikube directory not found! Volume will be excluded from docker build."
-  MINIKUBE_VOLUME=""
+ARCH=${ARCH:-}
+if [[ -z "$ARCH" ]]; then
+  ARCH=$(go env GOARCH)
 fi
 
-docker run                                            \
-  --tty                                               \
-  --rm                                                \
-  ${DOCKER_OPTS}                                      \
-  -e GOCACHE="/go/src/${PKG}/.cache"                  \
-  -v "${HOME}/.kube:${HOME}/.kube"                    \
-  -v "${KUBE_ROOT}:/go/src/${PKG}"                    \
-  -v "${KUBE_ROOT}/bin/${ARCH}:/go/bin/linux_${ARCH}" \
-  -v "/var/run/docker.sock:/var/run/docker.sock"      \
-  -v "${SSL_VOLUME}:/etc/ingress-controller/ssl/"     \
-  ${MINIKUBE_VOLUME}                                  \
-  -w "/go/src/${PKG}"                                 \
-  -u $(id -u ${USER}):$(id -g ${USER})                \
-  ${E2E_IMAGE} /bin/bash -c "${FLAGS}"
+# create output directory as current user to avoid problem with docker.
+mkdir -p "${KUBE_ROOT}/bin" "${KUBE_ROOT}/bin/${ARCH}"
+
+if [[ "$DOCKER_IN_DOCKER_ENABLED" == "true" ]]; then
+  /bin/bash -c "${FLAGS}"
+else
+  docker run                                            \
+    --tty                                               \
+    --rm                                                \
+    ${DOCKER_OPTS}                                      \
+    -e GOCACHE="/go/src/${PKG}/.cache"                  \
+    -e DOCKER_IN_DOCKER_ENABLED="true"                  \
+    -v "${HOME}/.kube:${HOME}/.kube"                    \
+    -v "${KUBE_ROOT}:/go/src/${PKG}"                    \
+    -v "${KUBE_ROOT}/bin/${ARCH}:/go/bin/linux_${ARCH}" \
+    -v "/var/run/docker.sock:/var/run/docker.sock"      \
+    -v "${INGRESS_VOLUME}:/etc/ingress-controller/"     \
+    -w "/go/src/${PKG}"                                 \
+    -u $(id -u ${USER}):$(id -g ${USER})                \
+    ${E2E_IMAGE} /bin/bash -c "${FLAGS}"
+fi

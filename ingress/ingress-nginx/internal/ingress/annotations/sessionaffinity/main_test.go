@@ -67,6 +67,7 @@ func TestIngressAffinityCookieConfig(t *testing.T) {
 
 	data := map[string]string{}
 	data[parser.GetAnnotationWithPrefix(annotationAffinityType)] = "cookie"
+	data[parser.GetAnnotationWithPrefix(annotationAffinityMode)] = "balanced"
 	data[parser.GetAnnotationWithPrefix(annotationAffinityCookieName)] = "INGRESSCOOKIE"
 	data[parser.GetAnnotationWithPrefix(annotationAffinityCookieExpires)] = "4500"
 	data[parser.GetAnnotationWithPrefix(annotationAffinityCookieMaxAge)] = "3000"
@@ -84,6 +85,10 @@ func TestIngressAffinityCookieConfig(t *testing.T) {
 		t.Errorf("expected cookie as affinity but returned %v", nginxAffinity.Type)
 	}
 
+	if nginxAffinity.Mode != "balanced" {
+		t.Errorf("expected balanced as affinity mode but returned %v", nginxAffinity.Mode)
+	}
+
 	if nginxAffinity.Cookie.Name != "INGRESSCOOKIE" {
 		t.Errorf("expected INGRESSCOOKIE as session-cookie-name but returned %v", nginxAffinity.Cookie.Name)
 	}
@@ -98,10 +103,6 @@ func TestIngressAffinityCookieConfig(t *testing.T) {
 
 	if nginxAffinity.Cookie.Path != "/foo" {
 		t.Errorf("expected /foo as session-cookie-path but returned %v", nginxAffinity.Cookie.Path)
-	}
-
-	if !nginxAffinity.Cookie.ChangeOnFailure {
-		t.Errorf("expected change of failure parameter set to true but returned %v", nginxAffinity.Cookie.ChangeOnFailure)
 	}
 
 	if !nginxAffinity.Cookie.ChangeOnFailure {

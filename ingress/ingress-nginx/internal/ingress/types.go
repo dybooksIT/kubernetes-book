@@ -28,18 +28,18 @@ import (
 	"k8s.io/ingress-nginx/internal/ingress/annotations/connection"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/cors"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/fastcgi"
+	"k8s.io/ingress-nginx/internal/ingress/annotations/globalratelimit"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/influxdb"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/ipwhitelist"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/log"
-	"k8s.io/ingress-nginx/internal/ingress/annotations/luarestywaf"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/mirror"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/modsecurity"
+	"k8s.io/ingress-nginx/internal/ingress/annotations/opentracing"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/proxy"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/proxyssl"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/ratelimit"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/redirect"
 	"k8s.io/ingress-nginx/internal/ingress/annotations/rewrite"
-	"k8s.io/ingress-nginx/internal/ingress/resolver"
 )
 
 var (
@@ -74,9 +74,6 @@ type Configuration struct {
 
 	// ConfigurationChecksum contains the particular checksum of a Configuration object
 	ConfigurationChecksum string `json:"configurationChecksum,omitempty"`
-
-	// ControllerPodsCount contains the list of running ingress controller Pod(s)
-	ControllerPodsCount int `json:"controllerPodsCount,omitempty"`
 }
 
 // Backend describes one or more remote server/s (endpoints) associated with a service
@@ -86,14 +83,11 @@ type Backend struct {
 	Name    string             `json:"name"`
 	Service *apiv1.Service     `json:"service,omitempty"`
 	Port    intstr.IntOrString `json:"port"`
-	// SecureCACert has the filename and SHA1 of the certificate authorities used to validate
-	// a secured connection to the backend
-	SecureCACert resolver.AuthSSLCert `json:"secureCACert"`
 	// SSLPassthrough indicates that Ingress controller will delegate TLS termination to the endpoints.
 	SSLPassthrough bool `json:"sslPassthrough"`
 	// Endpoints contains the list of endpoints currently running
 	Endpoints []Endpoint `json:"endpoints,omitempty"`
-	// StickySessionAffinitySession contains the StickyConfig object with stickyness configuration
+	// StickySessionAffinitySession contains the StickyConfig object with stickiness configuration
 	SessionAffinity SessionAffinityConfig `json:"sessionAffinityConfig"`
 	// Consistent hashing by NGINX variable
 	UpstreamHashBy UpstreamHashByConfig `json:"upstreamHashByConfig,omitempty"`
@@ -123,6 +117,8 @@ type TrafficShapingPolicy struct {
 	Header string `json:"header"`
 	// HeaderValue on which to redirect requests to this backend
 	HeaderValue string `json:"headerValue"`
+	// HeaderPattern the header value match pattern, support exact, regex.
+	HeaderPattern string `json:"headerPattern"`
 	// Cookie on which to redirect requests to this backend
 	Cookie string `json:"cookie"`
 }
@@ -141,18 +137,21 @@ func (s Backend) HashInclude(field string, v interface{}) (bool, error) {
 // +k8s:deepcopy-gen=true
 type SessionAffinityConfig struct {
 	AffinityType          string                `json:"name"`
+	AffinityMode          string                `json:"mode"`
 	CookieSessionAffinity CookieSessionAffinity `json:"cookieSessionAffinity"`
 }
 
 // CookieSessionAffinity defines the structure used in Affinity configured by Cookies.
 // +k8s:deepcopy-gen=true
 type CookieSessionAffinity struct {
-	Name            string              `json:"name"`
-	Expires         string              `json:"expires,omitempty"`
-	MaxAge          string              `json:"maxage,omitempty"`
-	Locations       map[string][]string `json:"locations,omitempty"`
-	Path            string              `json:"path,omitempty"`
-	ChangeOnFailure bool                `json:"change_on_failure,omitempty"`
+	Name                    string              `json:"name"`
+	Expires                 string              `json:"expires,omitempty"`
+	MaxAge                  string              `json:"maxage,omitempty"`
+	Locations               map[string][]string `json:"locations,omitempty"`
+	Path                    string              `json:"path,omitempty"`
+	SameSite                string              `json:"samesite,omitempty"`
+	ConditionalSameSiteNone bool                `json:"conditional_samesite_none,omitempty"`
+	ChangeOnFailure         bool                `json:"change_on_failure,omitempty"`
 }
 
 // UpstreamHashByConfig described setting from the upstream-hash-by* annotations.
@@ -184,8 +183,8 @@ type Server struct {
 	SSLCert *SSLCert `json:"sslCert"`
 	// Locations list of URIs configured in the server.
 	Locations []*Location `json:"locations,omitempty"`
-	// Alias return the alias of the server name
-	Alias string `json:"alias,omitempty"`
+	// Aliases return the alias of the server name
+	Aliases []string `json:"aliases,omitempty"`
 	// RedirectFromToWWW returns if a redirect to/from prefix www is required
 	RedirectFromToWWW bool `json:"redirectFromToWWW,omitempty"`
 	// CertificateAuth indicates the this server requires mutual authentication
@@ -199,6 +198,9 @@ type Server struct {
 	ServerSnippet string `json:"serverSnippet"`
 	// SSLCiphers returns list of ciphers to be enabled
 	SSLCiphers string `json:"sslCiphers,omitempty"`
+	// SSLPreferServerCiphers indicates that server ciphers should be preferred
+	// over client ciphers when using the SSLv3 and TLS protocols.
+	SSLPreferServerCiphers string `json:"sslPreferServerCiphers,omitempty"`
 	// AuthTLSError contains the reason why the access to a server should be denied
 	AuthTLSError string `json:"authTLSError,omitempty"`
 }
@@ -223,12 +225,16 @@ type Location struct {
 	// a '/'. If unspecified, the path defaults to a catch all sending
 	// traffic to the backend.
 	Path string `json:"path"`
+	// PathType represents the type of path referred to by a HTTPIngressPath.
+	PathType *networking.PathType `json:"pathType"`
 	// IsDefBackend indicates if service specified in the Ingress
 	// contains active endpoints or not. Returning true means the location
 	// uses the default backend.
 	IsDefBackend bool `json:"isDefBackend"`
 	// Ingress returns the ingress from which this location was generated
 	Ingress *Ingress `json:"ingress"`
+	// IngressPath original path defined in the ingress rule
+	IngressPath string `json:"ingressPath"`
 	// Backend describes the name of the backend to use.
 	Backend string `json:"backend"`
 	// Service describes the referenced services from the ingress
@@ -265,6 +271,10 @@ type Location struct {
 	// The Redirect annotation precedes RateLimit
 	// +optional
 	RateLimit ratelimit.Config `json:"rateLimit,omitempty"`
+	// GlobalRateLimit similar to RateLimit
+	// but this is applied globally across multiple replicas.
+	// +optional
+	GlobalRateLimit globalratelimit.Config `json:"globalRateLimit,omitempty"`
 	// Redirect describes a temporal o permanent redirection this location.
 	// +optional
 	Redirect redirect.Config `json:"redirect,omitempty"`
@@ -310,8 +320,6 @@ type Location struct {
 	// Logs allows to enable or disable the nginx logs
 	// By default access logs are enabled and rewrite logs are disabled
 	Logs log.Config `json:"logs,omitempty"`
-	// LuaRestyWAF contains parameters to configure lua-resty-waf
-	LuaRestyWAF luarestywaf.Config `json:"luaRestyWAF"`
 	// InfluxDB allows to monitor the incoming request by sending them to an influxdb database
 	// +optional
 	InfluxDB influxdb.Config `json:"influxDB,omitempty"`
@@ -332,6 +340,9 @@ type Location struct {
 	// Mirror allows you to mirror traffic to a "test" backend
 	// +optional
 	Mirror mirror.Config `json:"mirror,omitempty"`
+	// Opentracing allows the global opentracing setting to be overridden for a location
+	// +optional
+	Opentracing opentracing.Config `json:"opentracing"`
 }
 
 // SSLPassthroughBackend describes a SSL upstream server configured
@@ -383,5 +394,4 @@ type Ingress struct {
 
 // GeneralConfig holds the definition of lua general configuration data
 type GeneralConfig struct {
-	ControllerPodsCount int `json:"controllerPodsCount"`
 }

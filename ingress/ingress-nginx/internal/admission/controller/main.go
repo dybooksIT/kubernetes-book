@@ -17,13 +17,18 @@ limitations under the License.
 package controller
 
 import (
-	"github.com/google/uuid"
-	"k8s.io/api/admission/v1beta1"
+	"fmt"
+	"net/http"
+
+	admissionv1 "k8s.io/api/admission/v1"
+	admissionv1beta1 "k8s.io/api/admission/v1beta1"
 	networking "k8s.io/api/networking/v1beta1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/ingress-nginx/internal/ingress/annotations/parser"
-	"k8s.io/klog"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"k8s.io/klog/v2"
 )
 
 // Checker must return an error if the ingress provided as argument
@@ -38,56 +43,87 @@ type IngressAdmission struct {
 	Checker Checker
 }
 
+var (
+	ingressResource = metav1.GroupVersionKind{
+		Group:   networking.GroupName,
+		Version: "v1beta1",
+		Kind:    "Ingress",
+	}
+)
+
 // HandleAdmission populates the admission Response
 // with Allowed=false if the Object is an ingress that would prevent nginx to reload the configuration
 // with Allowed=true otherwise
-func (ia *IngressAdmission) HandleAdmission(ar *v1beta1.AdmissionReview) error {
-	if ar.Request == nil {
-		klog.Infof("rejecting nil request")
-		ar.Response = &v1beta1.AdmissionResponse{
-			UID:     types.UID(uuid.New().String()),
-			Allowed: false,
-		}
-		return nil
-	}
-	klog.V(3).Infof("handling ingress admission webhook request for {%s}  %s in namespace %s", ar.Request.Resource.String(), ar.Request.Name, ar.Request.Namespace)
+func (ia *IngressAdmission) HandleAdmission(obj runtime.Object) (runtime.Object, error) {
+	outputVersion := admissionv1.SchemeGroupVersion
 
-	ingressResource := v1.GroupVersionResource{Group: networking.SchemeGroupVersion.Group, Version: networking.SchemeGroupVersion.Version, Resource: "ingresses"}
+	review, isV1 := obj.(*admissionv1.AdmissionReview)
 
-	if ar.Request.Resource == ingressResource {
-		ar.Response = &v1beta1.AdmissionResponse{
-			UID:     types.UID(uuid.New().String()),
-			Allowed: false,
-		}
-		ingress := networking.Ingress{}
-		deserializer := codecs.UniversalDeserializer()
-		if _, _, err := deserializer.Decode(ar.Request.Object.Raw, nil, &ingress); err != nil {
-			ar.Response.Result = &v1.Status{Message: err.Error()}
-			ar.Response.AuditAnnotations = map[string]string{
-				parser.GetAnnotationWithPrefix("error"): err.Error(),
-			}
-			klog.Errorf("failed to decode ingress %s in namespace %s: %s, refusing it", ar.Request.Name, ar.Request.Namespace, err.Error())
-			return err
+	if !isV1 {
+		outputVersion = admissionv1beta1.SchemeGroupVersion
+		reviewv1beta1, isv1beta1 := obj.(*admissionv1beta1.AdmissionReview)
+		if !isv1beta1 {
+			return nil, fmt.Errorf("request is not of type AdmissionReview v1 or v1beta1")
 		}
 
-		err := ia.Checker.CheckIngress(&ingress)
-		if err != nil {
-			ar.Response.Result = &v1.Status{Message: err.Error()}
-			ar.Response.AuditAnnotations = map[string]string{
-				parser.GetAnnotationWithPrefix("error"): err.Error(),
-			}
-			klog.Errorf("failed to generate configuration for ingress %s in namespace %s: %s, refusing it", ar.Request.Name, ar.Request.Namespace, err.Error())
-			return err
-		}
-		ar.Response.Allowed = true
-		klog.Infof("successfully validated configuration, accepting ingress %s in namespace %s", ar.Request.Name, ar.Request.Namespace)
-		return nil
+		review = &admissionv1.AdmissionReview{}
+		convertV1beta1AdmissionReviewToAdmissionAdmissionReview(reviewv1beta1, review)
 	}
 
-	klog.Infof("accepting non ingress %s in namespace %s %s", ar.Request.Name, ar.Request.Namespace, ar.Request.Resource.String())
-	ar.Response = &v1beta1.AdmissionResponse{
-		UID:     types.UID(uuid.New().String()),
-		Allowed: true,
+	if !apiequality.Semantic.DeepEqual(review.Request.Kind, ingressResource) {
+		return nil, fmt.Errorf("rejecting admission review because the request does not contain an Ingress resource but %s with name %s in namespace %s",
+			review.Request.Kind.String(), review.Request.Name, review.Request.Namespace)
 	}
-	return nil
+
+	status := &admissionv1.AdmissionResponse{}
+	status.UID = review.Request.UID
+
+	ingress := networking.Ingress{}
+
+	codec := json.NewSerializerWithOptions(json.DefaultMetaFactory, scheme, scheme, json.SerializerOptions{
+		Pretty: true,
+	})
+	codec.Decode(review.Request.Object.Raw, nil, nil)
+	_, _, err := codec.Decode(review.Request.Object.Raw, nil, &ingress)
+	if err != nil {
+		klog.ErrorS(err, "failed to decode ingress")
+		status.Allowed = false
+		status.Result = &metav1.Status{
+			Status: metav1.StatusFailure, Code: http.StatusBadRequest, Reason: metav1.StatusReasonBadRequest,
+			Message: err.Error(),
+		}
+
+		review.Response = status
+		return convertResponse(review, outputVersion), nil
+	}
+
+	if err := ia.Checker.CheckIngress(&ingress); err != nil {
+		klog.ErrorS(err, "invalid ingress configuration", "ingress", fmt.Sprintf("%v/%v", review.Request.Name, review.Request.Namespace))
+		status.Allowed = false
+		status.Result = &metav1.Status{
+			Status: metav1.StatusFailure, Code: http.StatusBadRequest, Reason: metav1.StatusReasonBadRequest,
+			Message: err.Error(),
+		}
+
+		review.Response = status
+		return convertResponse(review, outputVersion), nil
+	}
+
+	klog.InfoS("successfully validated configuration, accepting", "ingress", fmt.Sprintf("%v/%v", review.Request.Name, review.Request.Namespace))
+	status.Allowed = true
+	review.Response = status
+
+	return convertResponse(review, outputVersion), nil
+}
+
+func convertResponse(review *admissionv1.AdmissionReview, outputVersion schema.GroupVersion) runtime.Object {
+	// reply v1
+	if outputVersion.Version == admissionv1.SchemeGroupVersion.Version {
+		return review
+	}
+
+	// reply v1beta1
+	reviewv1beta1 := &admissionv1beta1.AdmissionReview{}
+	convertAdmissionAdmissionReviewToV1beta1AdmissionReview(review, reviewv1beta1)
+	return review
 }

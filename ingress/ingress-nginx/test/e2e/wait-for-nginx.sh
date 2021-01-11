@@ -36,50 +36,68 @@ function on_exit {
 }
 trap on_exit EXIT
 
-CLUSTER_WIDE="$DIR/cluster-wide-$NAMESPACE"
+cat << EOF | kubectl apply --namespace=$NAMESPACE -f -
+# Required for e2e tcp tests
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: tcp-services
+  namespace: $NAMESPACE
 
-mkdir "$CLUSTER_WIDE"
-
-cat << EOF > "$CLUSTER_WIDE/kustomization.yaml"
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-bases:
-- ../cluster-wide
-nameSuffix: "-$NAMESPACE"
-EOF
-
-OVERLAY="$DIR/overlay-$NAMESPACE"
-
-mkdir "$OVERLAY"
-
-cat << EOF > "$OVERLAY/kustomization.yaml"
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: $NAMESPACE
-bases:
-- ../overlay
-- ../cluster-wide-$NAMESPACE
 EOF
 
 # Use the namespace overlay if it was requested
 if [[ ! -z "$NAMESPACE_OVERLAY" && -d "$DIR/namespace-overlays/$NAMESPACE_OVERLAY" ]]; then
     echo "Namespace overlay $NAMESPACE_OVERLAY is being used for namespace $NAMESPACE"
-    OVERLAY="$DIR/namespace-overlays/$NAMESPACE"
-    mkdir "$OVERLAY"
-    cat << EOF > "$OVERLAY/kustomization.yaml"
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: $NAMESPACE
-bases:
-- ../../namespace-overlays/$NAMESPACE_OVERLAY
-- ../../cluster-wide-$NAMESPACE
+    helm install nginx-ingress ${DIR}/charts/ingress-nginx \
+        --namespace=$NAMESPACE \
+        --values "$DIR/namespace-overlays/$NAMESPACE_OVERLAY/values.yaml"
+else
+    cat << EOF | helm install nginx-ingress ${DIR}/charts/ingress-nginx --namespace=$NAMESPACE --values -
+# TODO: remove the need to use fullnameOverride
+fullnameOverride: nginx-ingress
+controller:
+  image:
+    repository: ingress-controller/controller
+    tag: 1.0.0-dev
+    digest:
+  scope:
+    enabled: true
+  config:
+    worker-processes: "1"
+  readinessProbe:
+    initialDelaySeconds: 3
+    periodSeconds: 1
+  livenessProbe:
+    initialDelaySeconds: 3
+    periodSeconds: 1
+  service:
+    type: NodePort
+  extraArgs:
+    tcp-services-configmap: $NAMESPACE/tcp-services
+    # e2e tests do not require information about ingress status
+    update-status: "false"
+  terminationGracePeriodSeconds: 1
+  admissionWebhooks:
+    enabled: false
+
+  # ulimit -c unlimited
+  # mkdir -p /tmp/coredump
+  # chmod a+rwx /tmp/coredump
+  # echo "/tmp/coredump/core.%e.%p.%h.%t" > /proc/sys/kernel/core_pattern
+  extraVolumeMounts:
+    - name: coredump
+      mountPath: /tmp/coredump
+
+  extraVolumes:
+    - name: coredump
+      hostPath:
+        path: /tmp/coredump
+
+rbac:
+  create: true
+  scope: true
+
 EOF
+
 fi
-
-kubectl apply --kustomize "$OVERLAY"
-
-# wait for the deployment and fail if there is an error before starting the execution of any test
-kubectl rollout status \
-    --request-timeout=3m \
-    --namespace $NAMESPACE \
-    deployment nginx-ingress-controller

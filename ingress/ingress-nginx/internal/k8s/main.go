@@ -17,13 +17,15 @@ limitations under the License.
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	apiv1 "k8s.io/api/core/v1"
+	networkingv1beta1 "k8s.io/api/networking/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/version"
 	clientset "k8s.io/client-go/kubernetes"
@@ -42,20 +44,24 @@ func ParseNameNS(input string) (string, string, error) {
 
 // GetNodeIPOrName returns the IP address or the name of a node in the cluster
 func GetNodeIPOrName(kubeClient clientset.Interface, name string, useInternalIP bool) string {
-	node, err := kubeClient.CoreV1().Nodes().Get(name, metav1.GetOptions{})
+	node, err := kubeClient.CoreV1().Nodes().Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil {
-		klog.Errorf("Error getting node %v: %v", name, err)
+		klog.ErrorS(err, "Error getting node", "name", name)
 		return ""
 	}
 
-	if useInternalIP {
-		for _, address := range node.Status.Addresses {
-			if address.Type == apiv1.NodeInternalIP {
-				if address.Address != "" {
-					return address.Address
-				}
+	defaultOrInternalIP := ""
+	for _, address := range node.Status.Addresses {
+		if address.Type == apiv1.NodeInternalIP {
+			if address.Address != "" {
+				defaultOrInternalIP = address.Address
+				break
 			}
 		}
+	}
+
+	if useInternalIP {
+		return defaultOrInternalIP
 	}
 
 	for _, address := range node.Status.Addresses {
@@ -66,38 +72,43 @@ func GetNodeIPOrName(kubeClient clientset.Interface, name string, useInternalIP 
 		}
 	}
 
-	return ""
+	return defaultOrInternalIP
 }
+
+var (
+	// IngressPodDetails hold information about the ingress-nginx pod
+	IngressPodDetails *PodInfo
+)
 
 // PodInfo contains runtime information about the pod running the Ingres controller
+// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 type PodInfo struct {
-	Name      string
-	Namespace string
-	// Labels selectors of the running pod
-	// This is used to search for other Ingress controller pods
-	Labels map[string]string
+	metav1.TypeMeta
+	metav1.ObjectMeta
 }
 
-// GetPodDetails returns runtime information about the pod:
-// name, namespace and IP of the node where it is running
-func GetPodDetails(kubeClient clientset.Interface) (*PodInfo, error) {
+// GetIngressPod load the ingress-nginx pod
+func GetIngressPod(kubeClient clientset.Interface) error {
 	podName := os.Getenv("POD_NAME")
 	podNs := os.Getenv("POD_NAMESPACE")
 
 	if podName == "" || podNs == "" {
-		return nil, fmt.Errorf("unable to get POD information (missing POD_NAME or POD_NAMESPACE environment variable")
+		return fmt.Errorf("unable to get POD information (missing POD_NAME or POD_NAMESPACE environment variable")
 	}
 
-	pod, _ := kubeClient.CoreV1().Pods(podNs).Get(podName, metav1.GetOptions{})
-	if pod == nil {
-		return nil, fmt.Errorf("unable to get POD information")
+	pod, err := kubeClient.CoreV1().Pods(podNs).Get(context.TODO(), podName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("unable to get POD information: %v", err)
 	}
 
-	return &PodInfo{
-		Name:      podName,
-		Namespace: podNs,
-		Labels:    pod.GetLabels(),
-	}, nil
+	IngressPodDetails = &PodInfo{
+		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Pod"},
+	}
+
+	pod.ObjectMeta.DeepCopyInto(&IngressPodDetails.ObjectMeta)
+	IngressPodDetails.SetLabels(pod.GetLabels())
+
+	return nil
 }
 
 // MetaNamespaceKey knows how to make keys for API objects which implement meta.Interface.
@@ -110,29 +121,60 @@ func MetaNamespaceKey(obj interface{}) string {
 	return key
 }
 
-// IsNetworkingIngressAvailable indicates if package "k8s.io/api/networking/v1beta1" is available or not
-var IsNetworkingIngressAvailable bool
+// IsIngressV1Beta1Ready indicates if the running Kubernetes version is at least v1.18.0
+var IsIngressV1Beta1Ready bool
 
-// NetworkingIngressAvailable checks if the package "k8s.io/api/networking/v1beta1" is available or not
-func NetworkingIngressAvailable(client clientset.Interface) bool {
+// IsIngressV1Ready indicates if the running Kubernetes version is at least v1.19.0
+var IsIngressV1Ready bool
+
+// IngressClass indicates the class of the Ingress to use as filter
+var IngressClass *networkingv1beta1.IngressClass
+
+// IngressNGINXController defines the valid value of IngressClass
+// Controller field for ingress-nginx
+const IngressNGINXController = "k8s.io/ingress-nginx"
+
+// NetworkingIngressAvailable checks if the package "k8s.io/api/networking/v1beta1"
+// is available or not and if Ingress V1 is supported (k8s >= v1.18.0)
+func NetworkingIngressAvailable(client clientset.Interface) (bool, bool, bool) {
 	// check kubernetes version to use new ingress package or not
-	version114, err := version.ParseGeneric("v1.14.0")
-	if err != nil {
-		klog.Errorf("unexpected error parsing version: %v", err)
-		return false
-	}
+	version114, _ := version.ParseGeneric("v1.14.0")
+	version118, _ := version.ParseGeneric("v1.18.0")
+	version119, _ := version.ParseGeneric("v1.19.0")
 
 	serverVersion, err := client.Discovery().ServerVersion()
 	if err != nil {
-		klog.Errorf("unexpected error parsing Kubernetes version: %v", err)
-		return false
+		return false, false, false
 	}
 
 	runningVersion, err := version.ParseGeneric(serverVersion.String())
 	if err != nil {
-		klog.Errorf("unexpected error parsing running Kubernetes version: %v", err)
-		return false
+		klog.ErrorS(err, "unexpected error parsing running Kubernetes version")
+		return false, false, false
 	}
 
-	return runningVersion.AtLeast(version114)
+	return runningVersion.AtLeast(version114), runningVersion.AtLeast(version118), runningVersion.AtLeast(version119)
+}
+
+// default path type is Prefix to not break existing definitions
+var defaultPathType = networkingv1beta1.PathTypePrefix
+
+// SetDefaultNGINXPathType sets a default PathType when is not defined.
+func SetDefaultNGINXPathType(ing *networkingv1beta1.Ingress) {
+	for _, rule := range ing.Spec.Rules {
+		if rule.IngressRuleValue.HTTP == nil {
+			continue
+		}
+
+		for idx := range rule.IngressRuleValue.HTTP.Paths {
+			p := &rule.IngressRuleValue.HTTP.Paths[idx]
+			if p.PathType == nil {
+				p.PathType = &defaultPathType
+			}
+
+			if *p.PathType == networkingv1beta1.PathTypeImplementationSpecific {
+				p.PathType = &defaultPathType
+			}
+		}
+	}
 }

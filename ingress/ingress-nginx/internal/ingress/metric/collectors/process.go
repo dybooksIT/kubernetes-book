@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	common "github.com/ncabatoff/process-exporter"
 	"github.com/ncabatoff/process-exporter/proc"
@@ -32,10 +32,17 @@ type scrapeRequest struct {
 	done    chan struct{}
 }
 
-// Stopable defines a prometheus collector that can be stopped
-type Stopable interface {
+// Stoppable defines a prometheus collector that can be stopped
+type Stoppable interface {
 	prometheus.Collector
 	Stop()
+}
+
+func newBinaryNameMatcher(name, binary string) common.MatchNamer {
+	return BinaryNameMatcher{
+		Name:   name,
+		Binary: binary,
+	}
 }
 
 // BinaryNameMatcher define a namer using the binary name
@@ -97,14 +104,11 @@ func NewNGINXProcess(pod, namespace, ingressClass string) (NGINXProcessCollector
 		return nil, err
 	}
 
-	nm := BinaryNameMatcher{
-		Name:   name,
-		Binary: binary,
-	}
+	nm := newBinaryNameMatcher(name, binary)
 
 	p := namedProcess{
 		scrapeChan: make(chan scrapeRequest),
-		Grouper:    proc.NewGrouper(nm, true, false, false),
+		Grouper:    proc.NewGrouper(nm, true, false, false, false),
 		fs:         fs,
 	}
 

@@ -2,7 +2,7 @@
 
 The NGINX template is located in the file `/etc/nginx/template/nginx.tmpl`.
 
-Using a [Volume](https://kubernetes.io/docs/concepts/storage/volumes/) it is possible to use a custom template. 
+Using a [Volume](https://kubernetes.io/docs/concepts/storage/volumes/) it is possible to use a custom template.
 This includes using a [Configmap](https://kubernetes.io/docs/concepts/storage/volumes/#example-pod-with-a-secret-a-downward-api-and-a-configmap) as source of the template
 
 ```yaml
@@ -30,6 +30,7 @@ In addition to the built-in functions provided by the Go package the following f
 - hasSuffix: [strings.HasSuffix](https://golang.org/pkg/strings/#HasSuffix)
 - toUpper: [strings.ToUpper](https://golang.org/pkg/strings/#ToUpper)
 - toLower: [strings.ToLower](https://golang.org/pkg/strings/#ToLower)
+- split: [strings.Split](https://golang.org/pkg/strings/#Split)
 - quote: wraps a string in double quotes
 - buildLocation: helps to build the NGINX Location section in each server
 - buildProxyPass: builds the reverse proxy configuration
@@ -40,7 +41,6 @@ TODO:
 - buildAuthLocation:
 - buildAuthResponseHeaders:
 - buildResolvers:
-- buildLogFormatUpstream:
 - buildDenyVariable:
 - buildUpstreamName:
 - buildForwardedFor:

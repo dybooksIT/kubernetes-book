@@ -19,7 +19,6 @@ package ratelimit
 import (
 	"encoding/base64"
 	"fmt"
-	"sort"
 	"strings"
 
 	networking "k8s.io/api/networking/v1beta1"
@@ -157,10 +156,14 @@ func (a ratelimit) Parse(ing *networking.Ingress) (interface{}, error) {
 	rpm, _ := parser.GetIntAnnotation("limit-rpm", ing)
 	rps, _ := parser.GetIntAnnotation("limit-rps", ing)
 	conn, _ := parser.GetIntAnnotation("limit-connections", ing)
+	burstMultiplier, err := parser.GetIntAnnotation("limit-burst-multiplier", ing)
+	if err != nil {
+		burstMultiplier = defBurst
+	}
 
 	val, _ := parser.GetStringAnnotation("limit-whitelist", ing)
 
-	cidrs, err := parseCIDRs(val)
+	cidrs, err := net.ParseCIDRs(val)
 	if err != nil {
 		return nil, err
 	}
@@ -175,25 +178,25 @@ func (a ratelimit) Parse(ing *networking.Ingress) (interface{}, error) {
 		}, nil
 	}
 
-	zoneName := fmt.Sprintf("%v_%v", ing.GetNamespace(), ing.GetName())
+	zoneName := fmt.Sprintf("%v_%v_%v", ing.GetNamespace(), ing.GetName(), ing.UID)
 
 	return &Config{
 		Connections: Zone{
 			Name:       fmt.Sprintf("%v_conn", zoneName),
 			Limit:      conn,
-			Burst:      conn * defBurst,
+			Burst:      conn * burstMultiplier,
 			SharedSize: defSharedSize,
 		},
 		RPS: Zone{
 			Name:       fmt.Sprintf("%v_rps", zoneName),
 			Limit:      rps,
-			Burst:      rps * defBurst,
+			Burst:      rps * burstMultiplier,
 			SharedSize: defSharedSize,
 		},
 		RPM: Zone{
 			Name:       fmt.Sprintf("%v_rpm", zoneName),
 			Limit:      rpm,
-			Burst:      rpm * defBurst,
+			Burst:      rpm * burstMultiplier,
 			SharedSize: defSharedSize,
 		},
 		LimitRate:      lr,
@@ -202,32 +205,6 @@ func (a ratelimit) Parse(ing *networking.Ingress) (interface{}, error) {
 		ID:             encode(zoneName),
 		Whitelist:      cidrs,
 	}, nil
-}
-
-func parseCIDRs(s string) ([]string, error) {
-	if s == "" {
-		return []string{}, nil
-	}
-
-	values := strings.Split(s, ",")
-
-	ipnets, ips, err := net.ParseIPNets(values...)
-	if err != nil {
-		return nil, err
-	}
-
-	cidrs := []string{}
-	for k := range ipnets {
-		cidrs = append(cidrs, k)
-	}
-
-	for k := range ips {
-		cidrs = append(cidrs, k)
-	}
-
-	sort.Strings(cidrs)
-
-	return cidrs, nil
 }
 
 func encode(s string) string {

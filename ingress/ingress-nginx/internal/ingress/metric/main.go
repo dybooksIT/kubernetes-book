@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/ingress-nginx/internal/ingress"
@@ -160,7 +160,7 @@ func (c *collector) SetSSLExpireTime(servers []*ingress.Server) {
 		return
 	}
 
-	klog.V(2).Infof("Updating ssl expiration metrics.")
+	klog.V(2).InfoS("Updating ssl expiration metrics")
 	c.ingressController.SetSSLExpireTime(servers)
 }
 

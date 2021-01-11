@@ -1,9 +1,12 @@
 describe("Balancer chash", function()
-  local balancer_chash = require("balancer.chash")
+  after_each(function()
+    reset_ngx()
+  end)
 
   describe("balance()", function()
     it("uses correct key for given backend", function()
-      _G.ngx = { var = { request_uri = "/alma/armud" }}
+      ngx.var = { request_uri = "/alma/armud"}
+      local balancer_chash = require_without_cache("balancer.chash")
 
       local resty_chash = package.loaded["resty.chash"]
       resty_chash.new = function(self, nodes)

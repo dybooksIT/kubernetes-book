@@ -54,6 +54,7 @@
 		}],
 		"sessionAffinityConfig": {
 			"name": "",
+			"mode": "",
 			"cookieSessionAffinity": {
 				"name": ""
 			}
@@ -126,6 +127,7 @@
 		}],
 		"sessionAffinityConfig": {
 			"name": "",
+			"mode": "",
 			"cookieSessionAffinity": {
 				"name": ""
 			}
@@ -191,6 +193,7 @@
 		}],
 		"sessionAffinityConfig": {
 			"name": "",
+			"mode": "",
 			"cookieSessionAffinity": {
 				"name": ""
 			}
@@ -282,7 +285,7 @@
 			},
 			"proxy": {
 				"bodySize": "1m",
-				"conectTimeout": 5,
+				"connectTimeout": 5,
 				"sendTimeout": 60,
 				"readTimeout": 60,
 				"bufferSize": "4k",
@@ -389,7 +392,7 @@
 			},
 			"proxy": {
 				"bodySize": "1m",
-				"conectTimeout": 5,
+				"connectTimeout": 5,
 				"sendTimeout": 60,
 				"readTimeout": 60,
 				"bufferSize": "4k",
@@ -467,7 +470,7 @@
 			},
 			"proxy": {
 				"bodySize": "1m",
-				"conectTimeout": 5,
+				"connectTimeout": 5,
 				"sendTimeout": 60,
 				"readTimeout": 60,
 				"bufferSize": "4k",
@@ -579,7 +582,7 @@
 			},
 			"proxy": {
 				"bodySize": "1m",
-				"conectTimeout": 5,
+				"connectTimeout": 5,
 				"sendTimeout": 60,
 				"readTimeout": 60,
 				"bufferSize": "4k",
@@ -657,7 +660,7 @@
 			},
 			"proxy": {
 				"bodySize": "1m",
-				"conectTimeout": 5,
+				"connectTimeout": 5,
 				"sendTimeout": 60,
 				"readTimeout": 60,
 				"bufferSize": "4k",

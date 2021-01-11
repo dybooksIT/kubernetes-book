@@ -76,10 +76,6 @@ func (c1 *Configuration) Equal(c2 *Configuration) bool {
 		return false
 	}
 
-	if c1.ControllerPodsCount != c2.ControllerPodsCount {
-		return false
-	}
-
 	return true
 }
 
@@ -111,9 +107,6 @@ func (b1 *Backend) Equal(b2 *Backend) bool {
 	}
 
 	if b1.Port != b2.Port {
-		return false
-	}
-	if !(&b1.SecureCACert).Equal(&b2.SecureCACert) {
 		return false
 	}
 	if b1.SSLPassthrough != b2.SSLPassthrough {
@@ -152,6 +145,9 @@ func (sac1 *SessionAffinityConfig) Equal(sac2 *SessionAffinityConfig) bool {
 	if sac1.AffinityType != sac2.AffinityType {
 		return false
 	}
+	if sac1.AffinityMode != sac2.AffinityMode {
+		return false
+	}
 	if !(&sac1.CookieSessionAffinity).Equal(&sac2.CookieSessionAffinity) {
 		return false
 	}
@@ -177,6 +173,12 @@ func (csa1 *CookieSessionAffinity) Equal(csa2 *CookieSessionAffinity) bool {
 		return false
 	}
 	if csa1.MaxAge != csa2.MaxAge {
+		return false
+	}
+	if csa1.SameSite != csa2.SameSite {
+		return false
+	}
+	if csa1.ConditionalSameSiteNone != csa2.ConditionalSameSiteNone {
 		return false
 	}
 
@@ -245,6 +247,9 @@ func (tsp1 TrafficShapingPolicy) Equal(tsp2 TrafficShapingPolicy) bool {
 	if tsp1.HeaderValue != tsp2.HeaderValue {
 		return false
 	}
+	if tsp1.HeaderPattern != tsp2.HeaderPattern {
+		return false
+	}
 	if tsp1.Cookie != tsp2.Cookie {
 		return false
 	}
@@ -269,9 +274,24 @@ func (s1 *Server) Equal(s2 *Server) bool {
 	if !(s1.SSLCert).Equal(s2.SSLCert) {
 		return false
 	}
-	if s1.Alias != s2.Alias {
+
+	if len(s1.Aliases) != len(s2.Aliases) {
 		return false
 	}
+
+	for _, a1 := range s1.Aliases {
+		found := false
+		for _, a2 := range s2.Aliases {
+			if a1 == a2 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
 	if s1.RedirectFromToWWW != s2.RedirectFromToWWW {
 		return false
 	}
@@ -282,6 +302,9 @@ func (s1 *Server) Equal(s2 *Server) bool {
 		return false
 	}
 	if s1.SSLCiphers != s2.SSLCiphers {
+		return false
+	}
+	if s1.SSLPreferServerCiphers != s2.SSLPreferServerCiphers {
 		return false
 	}
 	if s1.AuthTLSError != s2.AuthTLSError {
@@ -332,7 +355,7 @@ func (l1 *Location) Equal(l2 *Location) bool {
 		}
 	}
 
-	if l1.Port.StrVal != l2.Port.StrVal {
+	if l1.Port.String() != l2.Port.String() {
 		return false
 	}
 	if !(&l1.BasicDigestAuth).Equal(&l2.BasicDigestAuth) {
@@ -354,6 +377,9 @@ func (l1 *Location) Equal(l2 *Location) bool {
 		return false
 	}
 	if !(&l1.RateLimit).Equal(&l2.RateLimit) {
+		return false
+	}
+	if !(&l1.GlobalRateLimit).Equal(&l2.GlobalRateLimit) {
 		return false
 	}
 	if !(&l1.Redirect).Equal(&l2.Redirect) {
@@ -389,9 +415,6 @@ func (l1 *Location) Equal(l2 *Location) bool {
 	if !(&l1.Logs).Equal(&l2.Logs) {
 		return false
 	}
-	if !(&l1.LuaRestyWAF).Equal(&l2.LuaRestyWAF) {
-		return false
-	}
 
 	if !(&l1.InfluxDB).Equal(&l2.InfluxDB) {
 		return false
@@ -422,11 +445,11 @@ func (l1 *Location) Equal(l2 *Location) bool {
 		return false
 	}
 
-	if l1.Mirror.URI != l2.Mirror.URI {
+	if !l1.Opentracing.Equal(&l2.Opentracing) {
 		return false
 	}
 
-	if l1.Mirror.RequestBody != l2.Mirror.RequestBody {
+	if !l1.Mirror.Equal(&l2.Mirror) {
 		return false
 	}
 
@@ -504,6 +527,9 @@ func (l4b1 *L4Backend) Equal(l4b2 *L4Backend) bool {
 	if l4b1.Protocol != l4b2.Protocol {
 		return false
 	}
+	if l4b1.ProxyProtocol != l4b2.ProxyProtocol {
+		return false
+	}
 
 	return true
 }
@@ -526,6 +552,9 @@ func (s1 *SSLCert) Equal(s2 *SSLCert) bool {
 		return false
 	}
 	if s1.PemCertKey != s2.PemCertKey {
+		return false
+	}
+	if s1.UID != s2.UID {
 		return false
 	}
 

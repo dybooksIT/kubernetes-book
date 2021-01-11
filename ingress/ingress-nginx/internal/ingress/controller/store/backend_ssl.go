@@ -17,12 +17,10 @@ limitations under the License.
 package store
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	"github.com/pkg/errors"
 	apiv1 "k8s.io/api/core/v1"
@@ -40,7 +38,7 @@ func (s *k8sStore) syncSecret(key string) {
 	s.syncSecretMu.Lock()
 	defer s.syncSecretMu.Unlock()
 
-	klog.V(3).Infof("Syncing Secret %q", key)
+	klog.V(3).InfoS("Syncing Secret", "name", key)
 
 	cert, err := s.getPemCertificate(key)
 	if err != nil {
@@ -57,7 +55,7 @@ func (s *k8sStore) syncSecret(key string) {
 			// no need to update
 			return
 		}
-		klog.Infof("Updating Secret %q in the local store", key)
+		klog.InfoS("Updating secret in local store", "name", key)
 		s.sslStore.Update(key, cert)
 		// this update must trigger an update
 		// (like an update event from a change in Ingress)
@@ -65,7 +63,7 @@ func (s *k8sStore) syncSecret(key string) {
 		return
 	}
 
-	klog.Infof("Adding Secret %q to the local store", key)
+	klog.InfoS("Adding secret to local store", "name", key)
 	s.sslStore.Add(key, cert)
 	// this update must trigger an update
 	// (like an update event from a change in Ingress)
@@ -84,6 +82,8 @@ func (s *k8sStore) getPemCertificate(secretName string) (*ingress.SSLCert, error
 	key, okkey := secret.Data[apiv1.TLSPrivateKeyKey]
 	ca := secret.Data["ca.crt"]
 
+	crl := secret.Data["ca.crl"]
+
 	auth := secret.Data["auth"]
 
 	// namespace/secretName -> namespace-secretName
@@ -99,17 +99,24 @@ func (s *k8sStore) getPemCertificate(secretName string) (*ingress.SSLCert, error
 			return nil, fmt.Errorf("key 'tls.key' missing from Secret %q", secretName)
 		}
 
-		sslCert, err = ssl.CreateSSLCert(cert, key)
+		sslCert, err = ssl.CreateSSLCert(cert, key, string(secret.UID))
 		if err != nil {
 			return nil, fmt.Errorf("unexpected error creating SSL Cert: %v", err)
 		}
 
 		if len(ca) > 0 {
+			caCert, err := ssl.CheckCACert(ca)
+			if err != nil {
+				return nil, fmt.Errorf("parsing CA certificate: %v", err)
+			}
+
 			path, err := ssl.StoreSSLCertOnDisk(nsSecName, sslCert)
 			if err != nil {
 				return nil, fmt.Errorf("error while storing certificate and key: %v", err)
 			}
 
+			sslCert.PemFileName = path
+			sslCert.CACertificate = caCert
 			sslCert.CAFileName = path
 			sslCert.CASHA = file.SHA1(path)
 
@@ -117,13 +124,25 @@ func (s *k8sStore) getPemCertificate(secretName string) (*ingress.SSLCert, error
 			if err != nil {
 				return nil, fmt.Errorf("error configuring CA certificate: %v", err)
 			}
+
+			if len(crl) > 0 {
+				err = ssl.ConfigureCRL(nsSecName, crl, sslCert)
+				if err != nil {
+					return nil, fmt.Errorf("error configuring CRL certificate: %v", err)
+				}
+			}
 		}
 
 		msg := fmt.Sprintf("Configuring Secret %q for TLS encryption (CN: %v)", secretName, sslCert.CN)
 		if ca != nil {
 			msg += " and authentication"
 		}
-		klog.V(3).Info(msg)
+
+		if crl != nil {
+			msg += " and CRL"
+		}
+
+		klog.V(3).InfoS(msg)
 	} else if len(ca) > 0 {
 		sslCert, err = ssl.CreateCACert(ca)
 		if err != nil {
@@ -135,9 +154,15 @@ func (s *k8sStore) getPemCertificate(secretName string) (*ingress.SSLCert, error
 			return nil, fmt.Errorf("error configuring CA certificate: %v", err)
 		}
 
+		if len(crl) > 0 {
+			err = ssl.ConfigureCRL(nsSecName, crl, sslCert)
+			if err != nil {
+				return nil, err
+			}
+		}
 		// makes this secret in 'syncSecret' to be used for Certificate Authentication
 		// this does not enable Certificate Authentication
-		klog.V(3).Infof("Configuring Secret %q for TLS authentication", secretName)
+		klog.V(3).InfoS("Configuring Secret for TLS authentication", "secret", secretName)
 	} else {
 		if auth != nil {
 			return nil, ErrSecretForAuth
@@ -148,11 +173,6 @@ func (s *k8sStore) getPemCertificate(secretName string) (*ingress.SSLCert, error
 
 	sslCert.Name = secret.Name
 	sslCert.Namespace = secret.Namespace
-
-	hasher := sha1.New()
-	hasher.Write(sslCert.Certificate.Raw)
-
-	sslCert.PemSHA = hex.EncodeToString(hasher.Sum(nil))
 
 	// the default SSL certificate needs to be present on disk
 	if secretName == s.defaultSSLCertificate {

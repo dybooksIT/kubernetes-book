@@ -14,60 +14,80 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-KIND_LOG_LEVEL="info"
+KIND_LOG_LEVEL="1"
 
 if ! [ -z $DEBUG ]; then
   set -x
-  KIND_LOG_LEVEL="debug"
+  KIND_LOG_LEVEL="6"
 fi
 
 set -o errexit
 set -o nounset
 set -o pipefail
 
+cleanup() {
+  if [[ "${KUBETEST_IN_DOCKER:-}" == "true" ]]; then
+    kind "export" logs --name ${KIND_CLUSTER_NAME} "${ARTIFACTS}/logs" || true
+  fi
+
+  kind delete cluster \
+    --verbosity=${KIND_LOG_LEVEL} \
+    --name ${KIND_CLUSTER_NAME}
+}
+
+trap cleanup EXIT
+
+export KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME:-ingress-nginx-dev}
+
+if ! command -v kind --version &> /dev/null; then
+  echo "kind is not installed. Use the package manager or visit the official site https://kind.sigs.k8s.io/"
+  exit 1
+fi
+
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-export TAG=dev
-export ARCH=amd64
+# Use 1.0.0-dev to make sure we use the latest configuration in the helm template
+export TAG=1.0.0-dev
+export ARCH=${ARCH:-amd64}
 export REGISTRY=ingress-controller
 
-export K8S_VERSION=${K8S_VERSION:-v1.14.1}
+export DOCKER_CLI_EXPERIMENTAL=enabled
 
-KIND_CLUSTER_NAME="ingress-nginx-dev"
+export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/kind-config-$KIND_CLUSTER_NAME}"
 
-kind --version || $(echo "Please install kind before running e2e tests";exit 1)
+if [ "${SKIP_CLUSTER_CREATION:-false}" = "false" ]; then
+  echo "[dev-env] creating Kubernetes cluster with kind"
 
-echo "[dev-env] creating Kubernetes cluster with kind"
-# TODO: replace the custom images after https://github.com/kubernetes-sigs/kind/issues/531
-kind create cluster \
-  --loglevel=${KIND_LOG_LEVEL} \
-  --name ${KIND_CLUSTER_NAME} \
-  --config ${DIR}/kind.yaml \
-  --image "aledbf/kind-node:${K8S_VERSION}"
+  export K8S_VERSION=${K8S_VERSION:-v1.19.4@sha256:796d09e217d93bed01ecf8502633e48fd806fe42f9d02fdd468b81cd4e3bd40b}
 
-export KUBECONFIG="$(kind get kubeconfig-path --name="${KIND_CLUSTER_NAME}")"
+  kind create cluster \
+    --verbosity=${KIND_LOG_LEVEL} \
+    --name ${KIND_CLUSTER_NAME} \
+    --config ${DIR}/kind.yaml \
+    --retain \
+    --image "kindest/node:${K8S_VERSION}"
 
-echo "Kubernetes cluster:"
-kubectl get nodes -o wide
+  echo "Kubernetes cluster:"
+  kubectl get nodes -o wide
+fi
 
-kubectl config set-context kubernetes-admin@${KIND_CLUSTER_NAME}
+if [ "${SKIP_IMAGE_CREATION:-false}" = "false" ]; then
+  if ! command -v ginkgo &> /dev/null; then
+    go get github.com/onsi/ginkgo/ginkgo
+  fi
 
-echo "[dev-env] building container"
-make -C ${DIR}/../../ build container
-make -C ${DIR}/../../ e2e-test-image
-make -C ${DIR}/../../images/fastcgi-helloserver/ build container
+  echo "[dev-env] building image"
+  make -C ${DIR}/../../ clean-image build image
+  make -C ${DIR}/../e2e-image image
+fi
 
-# Remove after https://github.com/kubernetes/ingress-nginx/pull/4271 is merged
-docker tag ${REGISTRY}/nginx-ingress-controller-${ARCH}:${TAG} ${REGISTRY}/nginx-ingress-controller:${TAG}
+# Preload images used in e2e tests
+KIND_WORKERS=$(kind get nodes --name="${KIND_CLUSTER_NAME}" | grep worker | awk '{printf (NR>1?",":"") $1}')
 
 echo "[dev-env] copying docker images to cluster..."
-kind load docker-image --name="${KIND_CLUSTER_NAME}" nginx-ingress-controller:e2e
-kind load docker-image --name="${KIND_CLUSTER_NAME}" ${REGISTRY}/nginx-ingress-controller:${TAG}
-kind load docker-image --name="${KIND_CLUSTER_NAME}" ${REGISTRY}/fastcgi-helloserver:${TAG}
+
+kind load docker-image --name="${KIND_CLUSTER_NAME}" --nodes=${KIND_WORKERS} nginx-ingress-controller:e2e
+kind load docker-image --name="${KIND_CLUSTER_NAME}" --nodes=${KIND_WORKERS} ${REGISTRY}/controller:${TAG}
 
 echo "[dev-env] running e2e tests..."
 make -C ${DIR}/../../ e2e-test
-
-kind delete cluster \
-  --loglevel=${KIND_LOG_LEVEL} \
-  --name ${KIND_CLUSTER_NAME}

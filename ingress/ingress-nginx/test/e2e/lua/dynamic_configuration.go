@@ -17,41 +17,37 @@ limitations under the License.
 package lua
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-	"github.com/parnurzeal/gorequest"
-
-	extensions "k8s.io/api/extensions/v1beta1"
+	"github.com/onsi/ginkgo"
+	"github.com/stretchr/testify/assert"
+	networking "k8s.io/api/networking/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"k8s.io/ingress-nginx/internal/nginx"
 	"k8s.io/ingress-nginx/test/e2e/framework"
 )
 
 const (
-	logDynamicConfigSuccess = "Dynamic reconfiguration succeeded"
-	logDynamicConfigFailure = "Dynamic reconfiguration failed"
 	logRequireBackendReload = "Configuration changes detected, backend reload required"
 	logBackendReloadSuccess = "Backend successfully reloaded"
-	logInitialConfigSync    = "Initial synchronization of the NGINX configuration"
-	waitForLuaSync          = 5 * time.Second
+
+	waitForLuaSync = 5 * time.Second
 )
 
-var _ = framework.IngressNginxDescribe("Dynamic Configuration", func() {
+var _ = framework.IngressNginxDescribe("[Lua] dynamic configuration", func() {
 	f := framework.NewDefaultFramework("dynamic-configuration")
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		f.NewEchoDeploymentWithReplicas(1)
-		ensureIngress(f, "foo.com", "http-svc")
+		ensureIngress(f, "foo.com", framework.EchoService)
 	})
 
-	It("configures balancer Lua middleware correctly", func() {
+	ginkgo.It("configures balancer Lua middleware correctly", func() {
 		f.WaitForNginxConfiguration(func(cfg string) bool {
 			return strings.Contains(cfg, "balancer.init_worker()") && strings.Contains(cfg, "balancer.balance()")
 		})
@@ -62,8 +58,8 @@ var _ = framework.IngressNginxDescribe("Dynamic Configuration", func() {
 		})
 	})
 
-	Context("when only backends change", func() {
-		It("handles endpoints only changes", func() {
+	ginkgo.Context("when only backends change", func() {
+		ginkgo.It("handles endpoints only changes", func() {
 			var nginxConfig string
 			f.WaitForNginxConfiguration(func(cfg string) bool {
 				nginxConfig = cfg
@@ -71,21 +67,24 @@ var _ = framework.IngressNginxDescribe("Dynamic Configuration", func() {
 			})
 
 			replicas := 2
-			err := framework.UpdateDeployment(f.KubeClientSet, f.Namespace, "http-svc", replicas, nil)
-			Expect(err).NotTo(HaveOccurred())
-			time.Sleep(waitForLuaSync)
+			err := framework.UpdateDeployment(f.KubeClientSet, f.Namespace, framework.EchoService, replicas, nil)
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-			ensureRequest(f, "foo.com")
+			f.HTTPTestClient().
+				GET("/").
+				WithHeader("Host", "foo.com").
+				Expect().
+				Status(http.StatusOK)
 
 			var newNginxConfig string
 			f.WaitForNginxConfiguration(func(cfg string) bool {
 				newNginxConfig = cfg
 				return true
 			})
-			Expect(nginxConfig).Should(Equal(newNginxConfig))
+			assert.Equal(ginkgo.GinkgoT(), nginxConfig, newNginxConfig)
 		})
 
-		It("handles endpoints only changes (down scaling of replicas)", func() {
+		ginkgo.It("handles endpoints only changes (down scaling of replicas)", func() {
 			var nginxConfig string
 			f.WaitForNginxConfiguration(func(cfg string) bool {
 				nginxConfig = cfg
@@ -93,68 +92,98 @@ var _ = framework.IngressNginxDescribe("Dynamic Configuration", func() {
 			})
 
 			replicas := 2
-			err := framework.UpdateDeployment(f.KubeClientSet, f.Namespace, "http-svc", replicas, nil)
-			Expect(err).NotTo(HaveOccurred())
-			time.Sleep(waitForLuaSync * 2)
+			err := framework.UpdateDeployment(f.KubeClientSet, f.Namespace, framework.EchoService, replicas, nil)
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-			ensureRequest(f, "foo.com")
+			framework.Sleep(waitForLuaSync)
+
+			f.HTTPTestClient().
+				GET("/").
+				WithHeader("Host", "foo.com").
+				Expect().
+				Status(http.StatusOK)
 
 			var newNginxConfig string
 			f.WaitForNginxConfiguration(func(cfg string) bool {
 				newNginxConfig = cfg
 				return true
 			})
-			Expect(nginxConfig).Should(Equal(newNginxConfig))
+			assert.Equal(ginkgo.GinkgoT(), nginxConfig, newNginxConfig)
 
-			err = framework.UpdateDeployment(f.KubeClientSet, f.Namespace, "http-svc", 0, nil)
+			err = framework.UpdateDeployment(f.KubeClientSet, f.Namespace, framework.EchoService, 0, nil)
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-			Expect(err).NotTo(HaveOccurred())
-			time.Sleep(waitForLuaSync * 2)
+			framework.Sleep(waitForLuaSync)
 
-			ensureRequestWithStatus(f, "foo.com", 503)
+			f.HTTPTestClient().
+				GET("/").
+				WithHeader("Host", "foo.com").
+				Expect().
+				Status(503)
 		})
 
-		It("handles endpoints only changes consistently (down scaling of replicas vs. empty service)", func() {
+		ginkgo.It("handles endpoints only changes consistently (down scaling of replicas vs. empty service)", func() {
 			deploymentName := "scalingecho"
 			f.NewEchoDeploymentWithNameAndReplicas(deploymentName, 0)
 			createIngress(f, "scaling.foo.com", deploymentName)
-			originalResponseCode := runRequest(f, "scaling.foo.com")
+
+			resp := f.HTTPTestClient().
+				GET("/").
+				WithHeader("Host", "scaling.foo.com").
+				Expect().Raw()
+
+			originalResponseCode := resp.StatusCode
 
 			replicas := 2
 			err := framework.UpdateDeployment(f.KubeClientSet, f.Namespace, deploymentName, replicas, nil)
-			Expect(err).NotTo(HaveOccurred())
-			time.Sleep(waitForLuaSync * 2)
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-			expectedSuccessResponseCode := runRequest(f, "scaling.foo.com")
+			framework.Sleep(waitForLuaSync)
+
+			resp = f.HTTPTestClient().
+				GET("/").
+				WithHeader("Host", "scaling.foo.com").
+				Expect().Raw()
+
+			expectedSuccessResponseCode := resp.StatusCode
 
 			replicas = 0
 			err = framework.UpdateDeployment(f.KubeClientSet, f.Namespace, deploymentName, replicas, nil)
-			Expect(err).NotTo(HaveOccurred())
-			time.Sleep(waitForLuaSync * 2)
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-			expectedFailureResponseCode := runRequest(f, "scaling.foo.com")
+			framework.Sleep(waitForLuaSync)
 
-			Expect(originalResponseCode).To(Equal(503), "Expected empty service to return 503 response.")
-			Expect(expectedFailureResponseCode).To(Equal(503), "Expected downscaled replicaset to return 503 response.")
-			Expect(expectedSuccessResponseCode).To(Equal(200), "Expected intermediate scaled replicaset to return a 200 response.")
+			resp = f.HTTPTestClient().
+				GET("/").
+				WithHeader("Host", "scaling.foo.com").
+				Expect().Raw()
+
+			expectedFailureResponseCode := resp.StatusCode
+
+			assert.Equal(ginkgo.GinkgoT(), originalResponseCode, 503, "Expected empty service to return 503 response")
+			assert.Equal(ginkgo.GinkgoT(), expectedFailureResponseCode, 503, "Expected downscaled replicaset to return 503 response")
+			assert.Equal(ginkgo.GinkgoT(), expectedSuccessResponseCode, 200, "Expected intermediate scaled replicaset to return a 200 response")
 		})
 
-		It("handles an annotation change", func() {
+		ginkgo.It("handles an annotation change", func() {
 			var nginxConfig string
 			f.WaitForNginxConfiguration(func(cfg string) bool {
 				nginxConfig = cfg
 				return true
 			})
 
-			ingress, err := f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Get("foo.com", metav1.GetOptions{})
-			Expect(err).ToNot(HaveOccurred())
+			ingress, err := f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Get(context.TODO(), "foo.com", metav1.GetOptions{})
+			assert.Nil(ginkgo.GinkgoT(), err)
 
 			ingress.ObjectMeta.Annotations["nginx.ingress.kubernetes.io/load-balance"] = "round_robin"
-			_, err = f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Update(ingress)
-			Expect(err).ToNot(HaveOccurred())
-			time.Sleep(waitForLuaSync)
+			_, err = f.KubeClientSet.NetworkingV1beta1().Ingresses(f.Namespace).Update(context.TODO(), ingress, metav1.UpdateOptions{})
+			assert.Nil(ginkgo.GinkgoT(), err)
 
-			ensureRequest(f, "foo.com")
+			f.HTTPTestClient().
+				GET("/").
+				WithHeader("Host", "foo.com").
+				Expect().
+				Status(http.StatusOK)
 
 			var newNginxConfig string
 			f.WaitForNginxConfiguration(func(cfg string) bool {
@@ -162,70 +191,29 @@ var _ = framework.IngressNginxDescribe("Dynamic Configuration", func() {
 				return true
 			})
 
-			Expect(nginxConfig).Should(Equal(newNginxConfig))
+			assert.Equal(ginkgo.GinkgoT(), nginxConfig, newNginxConfig)
 		})
-	})
-
-	It("handles a non backend update", func() {
-		var nginxConfig string
-		f.WaitForNginxConfiguration(func(cfg string) bool {
-			nginxConfig = cfg
-			return true
-		})
-
-		ingress, err := f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Get("foo.com", metav1.GetOptions{})
-		Expect(err).ToNot(HaveOccurred())
-		ingress.Spec.TLS = []extensions.IngressTLS{
-			{
-				Hosts:      []string{"foo.com"},
-				SecretName: "foo.com",
-			},
-		}
-		_, err = framework.CreateIngressTLSSecret(f.KubeClientSet,
-			ingress.Spec.TLS[0].Hosts,
-			ingress.Spec.TLS[0].SecretName,
-			ingress.Namespace)
-		Expect(err).ToNot(HaveOccurred())
-		_, err = f.KubeClientSet.ExtensionsV1beta1().Ingresses(f.Namespace).Update(ingress)
-		Expect(err).ToNot(HaveOccurred())
-
-		var newNginxConfig string
-		f.WaitForNginxConfiguration(func(cfg string) bool {
-			newNginxConfig = cfg
-			return true
-		})
-		Expect(nginxConfig).ShouldNot(Equal(newNginxConfig))
-	})
-
-	It("sets controllerPodsCount in Lua general configuration", func() {
-		// https://github.com/curl/curl/issues/936
-		curlCmd := fmt.Sprintf("curl --fail --silent --unix-socket %v http://localhost/configuration/general", nginx.StatusSocket)
-
-		output, err := f.ExecIngressPod(curlCmd)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(output).Should(Equal(`{"controllerPodsCount":1}`))
-
-		err = framework.UpdateDeployment(f.KubeClientSet, f.Namespace, "nginx-ingress-controller", 3, nil)
-		Expect(err).ToNot(HaveOccurred())
-		time.Sleep(waitForLuaSync)
-
-		output, err = f.ExecIngressPod(curlCmd)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(output).Should(Equal(`{"controllerPodsCount":3}`))
 	})
 })
 
-func ensureIngress(f *framework.Framework, host string, deploymentName string) *extensions.Ingress {
+func ensureIngress(f *framework.Framework, host string, deploymentName string) *networking.Ingress {
 	ing := createIngress(f, host, deploymentName)
-	time.Sleep(waitForLuaSync)
-	ensureRequest(f, host)
+
+	f.HTTPTestClient().
+		GET("/").
+		WithHeader("Host", host).
+		Expect().
+		Status(http.StatusOK)
 
 	return ing
 }
 
-func createIngress(f *framework.Framework, host string, deploymentName string) *extensions.Ingress {
+func createIngress(f *framework.Framework, host string, deploymentName string) *networking.Ingress {
 	ing := f.EnsureIngress(framework.NewSingleIngress(host, "/", host, f.Namespace, deploymentName, 80,
-		&map[string]string{"nginx.ingress.kubernetes.io/load-balance": "ewma"}))
+		map[string]string{
+			"nginx.ingress.kubernetes.io/load-balance": "ewma",
+		},
+	))
 
 	f.WaitForNginxServer(host,
 		func(server string) bool {
@@ -236,53 +224,18 @@ func createIngress(f *framework.Framework, host string, deploymentName string) *
 	return ing
 }
 
-func ensureRequest(f *framework.Framework, host string) {
-	resp, _, errs := gorequest.New().
-		Get(f.GetURL(framework.HTTP)).
-		Set("Host", host).
-		End()
-	Expect(errs).Should(BeEmpty())
-	Expect(resp.StatusCode).Should(Equal(http.StatusOK))
-}
+func ensureHTTPSRequest(f *framework.Framework, url string, host string, expectedDNSName string) {
+	resp := f.HTTPTestClientWithTLSConfig(&tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: true,
+	}).
+		GET("/").
+		WithURL(url).
+		WithHeader("Host", host).
+		Expect().
+		Raw()
 
-func ensureRequestWithStatus(f *framework.Framework, host string, statusCode int) {
-	resp, _, errs := gorequest.New().
-		Get(f.GetURL(framework.HTTP)).
-		Set("Host", host).
-		End()
-	Expect(errs).Should(BeEmpty())
-	Expect(resp.StatusCode).Should(Equal(statusCode))
-}
-
-func runRequest(f *framework.Framework, host string) int {
-	resp, _, errs := gorequest.New().
-		Get(f.GetURL(framework.HTTP)).
-		Set("Host", host).
-		End()
-	Expect(errs).Should(BeEmpty())
-	return resp.StatusCode
-}
-
-func ensureHTTPSRequest(url string, host string, expectedDNSName string) {
-	resp, _, errs := gorequest.New().
-		Get(url).
-		Set("Host", host).
-		TLSClientConfig(&tls.Config{
-			InsecureSkipVerify: true,
-			ServerName:         host,
-		}).
-		End()
-	Expect(errs).Should(BeEmpty())
-	Expect(resp.StatusCode).Should(Equal(http.StatusOK))
-	Expect(len(resp.TLS.PeerCertificates)).Should(BeNumerically("==", 1))
-	Expect(resp.TLS.PeerCertificates[0].DNSNames[0]).Should(Equal(expectedDNSName))
-}
-
-func getCookie(name string, cookies []*http.Cookie) (*http.Cookie, error) {
-	for _, cookie := range cookies {
-		if cookie.Name == name {
-			return cookie, nil
-		}
-	}
-	return &http.Cookie{}, fmt.Errorf("Cookie does not exist")
+	assert.Equal(ginkgo.GinkgoT(), resp.StatusCode, http.StatusOK)
+	assert.Equal(ginkgo.GinkgoT(), len(resp.TLS.PeerCertificates), 1)
+	assert.Equal(ginkgo.GinkgoT(), resp.TLS.PeerCertificates[0].DNSNames[0], expectedDNSName)
 }

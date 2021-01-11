@@ -30,12 +30,19 @@ type SSLCert struct {
 
 	Certificate *x509.Certificate `json:"-"`
 
+	CACertificate []*x509.Certificate `json:"-"`
+
 	// CAFileName contains the path to the file with the root certificate
 	CAFileName string `json:"caFileName"`
 
 	// CASHA contains the sha1 of the ca file.
 	// This is used to detect changes in the secret that contains certificates
 	CASHA string `json:"caSha"`
+
+	// CRLFileName contains the path to the file with the Certificate Revocation List
+	CRLFileName string `json:"crlFileName"`
+	// CRLSHA contains the sha1 of the pem file.
+	CRLSHA string `json:"crlSha"`
 
 	// PemFileName contains the path to the file with the certificate and key concatenated
 	PemFileName string `json:"pemFileName"`
@@ -52,6 +59,9 @@ type SSLCert struct {
 
 	// Pem encoded certificate and key concatenated
 	PemCertKey string `json:"pemCertKey,omitempty"`
+
+	// UID unique identifier of the Kubernetes Secret
+	UID string `json:"uid"`
 }
 
 // GetObjectKind implements the ObjectKind interface as a noop

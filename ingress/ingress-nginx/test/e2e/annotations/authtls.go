@@ -22,23 +22,19 @@ import (
 	"net/http"
 	"strings"
 
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/gomega"
-	"github.com/parnurzeal/gorequest"
+	"github.com/onsi/ginkgo"
+	"github.com/stretchr/testify/assert"
 	"k8s.io/ingress-nginx/test/e2e/framework"
 )
 
-var _ = framework.IngressNginxDescribe("Annotations - AuthTLS", func() {
+var _ = framework.DescribeAnnotation("auth-tls-*", func() {
 	f := framework.NewDefaultFramework("authtls")
 
-	BeforeEach(func() {
+	ginkgo.BeforeEach(func() {
 		f.NewEchoDeploymentWithReplicas(2)
 	})
 
-	AfterEach(func() {
-	})
-
-	It("should set valid auth-tls-secret", func() {
+	ginkgo.It("should set valid auth-tls-secret", func() {
 		host := "authtls.foo.com"
 		nameSpace := f.Namespace
 
@@ -47,38 +43,34 @@ var _ = framework.IngressNginxDescribe("Annotations - AuthTLS", func() {
 			host,
 			host,
 			nameSpace)
-		Expect(err).ToNot(HaveOccurred())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
 		annotations := map[string]string{
 			"nginx.ingress.kubernetes.io/auth-tls-secret": nameSpace + "/" + host,
 		}
 
-		f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, nameSpace, "http-svc", 80, &annotations))
+		f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, nameSpace, framework.EchoService, 80, annotations))
 
 		assertSslClientCertificateConfig(f, host, "on", "1")
 
 		// Send Request without Client Certs
-		req := gorequest.New()
-		uri := "/"
-		resp, _, errs := req.
-			Get(f.GetURL(framework.HTTPS)+uri).
-			TLSClientConfig(&tls.Config{ServerName: host, InsecureSkipVerify: true}).
-			Set("Host", host).
-			End()
-		Expect(errs).Should(BeEmpty())
-		Expect(resp.StatusCode).Should(Equal(http.StatusBadRequest))
+		f.HTTPTestClientWithTLSConfig(&tls.Config{ServerName: host, InsecureSkipVerify: true}).
+			GET("/").
+			WithURL(f.GetURL(framework.HTTPS)).
+			WithHeader("Host", host).
+			Expect().
+			Status(http.StatusBadRequest)
 
 		// Send Request Passing the Client Certs
-		resp, _, errs = req.
-			Get(f.GetURL(framework.HTTPS)+uri).
-			TLSClientConfig(clientConfig).
-			Set("Host", host).
-			End()
-		Expect(errs).Should(BeEmpty())
-		Expect(resp.StatusCode).Should(Equal(http.StatusOK))
+		f.HTTPTestClientWithTLSConfig(clientConfig).
+			GET("/").
+			WithURL(f.GetURL(framework.HTTPS)).
+			WithHeader("Host", host).
+			Expect().
+			Status(http.StatusOK)
 	})
 
-	It("should set valid auth-tls-secret, sslVerify to off, and sslVerifyDepth to 2", func() {
+	ginkgo.It("should set valid auth-tls-secret, sslVerify to off, and sslVerifyDepth to 2", func() {
 		host := "authtls.foo.com"
 		nameSpace := f.Namespace
 
@@ -87,7 +79,7 @@ var _ = framework.IngressNginxDescribe("Annotations - AuthTLS", func() {
 			host,
 			host,
 			nameSpace)
-		Expect(err).ToNot(HaveOccurred())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
 		annotations := map[string]string{
 			"nginx.ingress.kubernetes.io/auth-tls-secret":        nameSpace + "/" + host,
@@ -95,23 +87,20 @@ var _ = framework.IngressNginxDescribe("Annotations - AuthTLS", func() {
 			"nginx.ingress.kubernetes.io/auth-tls-verify-depth":  "2",
 		}
 
-		f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, nameSpace, "http-svc", 80, &annotations))
+		f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, nameSpace, framework.EchoService, 80, annotations))
 
 		assertSslClientCertificateConfig(f, host, "off", "2")
 
 		// Send Request without Client Certs
-		req := gorequest.New()
-		uri := "/"
-		resp, _, errs := req.
-			Get(f.GetURL(framework.HTTPS)+uri).
-			TLSClientConfig(&tls.Config{ServerName: host, InsecureSkipVerify: true}).
-			Set("Host", host).
-			End()
-		Expect(errs).Should(BeEmpty())
-		Expect(resp.StatusCode).Should(Equal(http.StatusOK))
+		f.HTTPTestClient().
+			GET("/").
+			WithURL(f.GetURL(framework.HTTPS)).
+			WithHeader("Host", host).
+			Expect().
+			Status(http.StatusOK)
 	})
 
-	It("should set valid auth-tls-secret, pass certificate to upstream, and error page", func() {
+	ginkgo.It("should set valid auth-tls-secret, pass certificate to upstream, and error page", func() {
 		host := "authtls.foo.com"
 		nameSpace := f.Namespace
 
@@ -122,7 +111,7 @@ var _ = framework.IngressNginxDescribe("Annotations - AuthTLS", func() {
 			host,
 			host,
 			nameSpace)
-		Expect(err).ToNot(HaveOccurred())
+		assert.Nil(ginkgo.GinkgoT(), err)
 
 		annotations := map[string]string{
 			"nginx.ingress.kubernetes.io/auth-tls-secret":                       nameSpace + "/" + host,
@@ -130,7 +119,7 @@ var _ = framework.IngressNginxDescribe("Annotations - AuthTLS", func() {
 			"nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream": "true",
 		}
 
-		f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, nameSpace, "http-svc", 80, &annotations))
+		f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, nameSpace, framework.EchoService, 80, annotations))
 
 		assertSslClientCertificateConfig(f, host, "on", "1")
 
@@ -144,26 +133,81 @@ var _ = framework.IngressNginxDescribe("Annotations - AuthTLS", func() {
 			})
 
 		// Send Request without Client Certs
-		req := gorequest.New()
-		uri := "/"
-		resp, _, errs := req.
-			Get(f.GetURL(framework.HTTPS)+uri).
-			TLSClientConfig(&tls.Config{ServerName: host, InsecureSkipVerify: true}).
-			Set("Host", host).
-			RedirectPolicy(noRedirectPolicyFunc).
-			End()
-		Expect(errs).Should(BeEmpty())
-		Expect(resp.StatusCode).Should(Equal(http.StatusFound))
-		Expect(resp.Header.Get("Location")).Should(Equal(f.GetURL(framework.HTTP) + errorPath))
+		f.HTTPTestClient().
+			GET("/").
+			WithURL(f.GetURL(framework.HTTPS)).
+			WithHeader("Host", host).
+			Expect().
+			Status(http.StatusFound).
+			Header("Location").Equal(f.GetURL(framework.HTTP) + errorPath)
 
 		// Send Request Passing the Client Certs
-		resp, _, errs = req.
-			Get(f.GetURL(framework.HTTPS)+uri).
-			TLSClientConfig(clientConfig).
-			Set("Host", host).
-			End()
-		Expect(errs).Should(BeEmpty())
-		Expect(resp.StatusCode).Should(Equal(http.StatusOK))
+		f.HTTPTestClientWithTLSConfig(clientConfig).
+			GET("/").
+			WithURL(f.GetURL(framework.HTTPS)).
+			WithHeader("Host", host).
+			Expect().
+			Status(http.StatusOK)
+	})
+
+	ginkgo.It("should validate auth-tls-verify-client", func() {
+		host := "authtls.foo.com"
+		nameSpace := f.Namespace
+
+		clientConfig, err := framework.CreateIngressMASecret(
+			f.KubeClientSet,
+			host,
+			host,
+			nameSpace)
+		assert.Nil(ginkgo.GinkgoT(), err)
+
+		annotations := map[string]string{
+			"nginx.ingress.kubernetes.io/auth-tls-secret":        nameSpace + "/" + host,
+			"nginx.ingress.kubernetes.io/auth-tls-verify-client": "on",
+		}
+
+		ing := f.EnsureIngress(framework.NewSingleIngressWithTLS(host, "/", host, []string{host}, nameSpace, framework.EchoService, 80, annotations))
+
+		assertSslClientCertificateConfig(f, host, "on", "1")
+
+		f.HTTPTestClientWithTLSConfig(clientConfig).
+			GET("/").
+			WithURL(f.GetURL(framework.HTTPS)).
+			WithHeader("Host", host).
+			Expect().
+			Status(http.StatusOK)
+
+		f.HTTPTestClient().
+			GET("/").
+			WithURL(f.GetURL(framework.HTTPS)).
+			WithHeader("Host", host).
+			Expect().
+			Status(http.StatusBadRequest)
+
+		annotations = map[string]string{
+			"nginx.ingress.kubernetes.io/auth-tls-secret":        nameSpace + "/" + host,
+			"nginx.ingress.kubernetes.io/auth-tls-verify-client": "off",
+		}
+
+		ing.SetAnnotations(annotations)
+		f.UpdateIngress(ing)
+
+		assertSslClientCertificateConfig(f, host, "off", "1")
+
+		f.HTTPTestClientWithTLSConfig(clientConfig).
+			GET("/").
+			WithURL(f.GetURL(framework.HTTPS)).
+			WithHeader("Host", host).
+			Expect().
+			Status(http.StatusOK)
+
+		f.HTTPTestClient().
+			GET("/").
+			WithURL(f.GetURL(framework.HTTPS)).
+			WithHeader("Host", host).
+			Expect().
+			Status(http.StatusOK)
+
 	})
 })
 

@@ -18,7 +18,6 @@ package authreq
 
 import (
 	"fmt"
-	"net/url"
 	"reflect"
 	"testing"
 
@@ -73,30 +72,33 @@ func TestAnnotations(t *testing.T) {
 	ing.SetAnnotations(data)
 
 	tests := []struct {
-		title           string
-		url             string
-		signinURL       string
-		method          string
-		requestRedirect string
-		authSnippet     string
-		authCacheKey    string
-		expErr          bool
+		title                  string
+		url                    string
+		signinURL              string
+		signinURLRedirectParam string
+		method                 string
+		requestRedirect        string
+		authSnippet            string
+		authCacheKey           string
+		expErr                 bool
 	}{
-		{"empty", "", "", "", "", "", "", true},
-		{"no scheme", "bar", "bar", "", "", "", "", true},
-		{"invalid host", "http://", "http://", "", "", "", "", true},
-		{"invalid host (multiple dots)", "http://foo..bar.com", "http://foo..bar.com", "", "", "", "", true},
-		{"valid URL", "http://bar.foo.com/external-auth", "http://bar.foo.com/external-auth", "", "", "", "", false},
-		{"valid URL - send body", "http://foo.com/external-auth", "http://foo.com/external-auth", "POST", "", "", "", false},
-		{"valid URL - send body", "http://foo.com/external-auth", "http://foo.com/external-auth", "GET", "", "", "", false},
-		{"valid URL - request redirect", "http://foo.com/external-auth", "http://foo.com/external-auth", "GET", "http://foo.com/redirect-me", "", "", false},
-		{"auth snippet", "http://foo.com/external-auth", "http://foo.com/external-auth", "", "", "proxy_set_header My-Custom-Header 42;", "", false},
-		{"auth cache ", "http://foo.com/external-auth", "http://foo.com/external-auth", "", "", "", "$foo$bar", false},
+		{"empty", "", "", "", "", "", "", "", true},
+		{"no scheme", "bar", "bar", "", "", "", "", "", true},
+		{"invalid host", "http://", "http://", "", "", "", "", "", true},
+		{"invalid host (multiple dots)", "http://foo..bar.com", "http://foo..bar.com", "", "", "", "", "", true},
+		{"valid URL", "http://bar.foo.com/external-auth", "http://bar.foo.com/external-auth", "", "", "", "", "", false},
+		{"valid URL - send body", "http://foo.com/external-auth", "http://foo.com/external-auth", "", "POST", "", "", "", false},
+		{"valid URL - send body", "http://foo.com/external-auth", "http://foo.com/external-auth", "", "GET", "", "", "", false},
+		{"valid URL - request redirect", "http://foo.com/external-auth", "http://foo.com/external-auth", "", "GET", "http://foo.com/redirect-me", "", "", false},
+		{"auth snippet", "http://foo.com/external-auth", "http://foo.com/external-auth", "", "", "", "proxy_set_header My-Custom-Header 42;", "", false},
+		{"auth cache ", "http://foo.com/external-auth", "http://foo.com/external-auth", "", "", "", "", "$foo$bar", false},
+		{"redirect param", "http://bar.foo.com/external-auth", "http://bar.foo.com/external-auth", "origUrl", "", "", "", "", false},
 	}
 
 	for _, test := range tests {
 		data[parser.GetAnnotationWithPrefix("auth-url")] = test.url
 		data[parser.GetAnnotationWithPrefix("auth-signin")] = test.signinURL
+		data[parser.GetAnnotationWithPrefix("auth-signin-redirect-param")] = test.signinURLRedirectParam
 		data[parser.GetAnnotationWithPrefix("auth-method")] = fmt.Sprintf("%v", test.method)
 		data[parser.GetAnnotationWithPrefix("auth-request-redirect")] = test.requestRedirect
 		data[parser.GetAnnotationWithPrefix("auth-snippet")] = test.authSnippet
@@ -122,6 +124,9 @@ func TestAnnotations(t *testing.T) {
 		}
 		if u.SigninURL != test.signinURL {
 			t.Errorf("%v: expected \"%v\" but \"%v\" was returned", test.title, test.signinURL, u.SigninURL)
+		}
+		if u.SigninURLRedirectParam != test.signinURLRedirectParam {
+			t.Errorf("%v: expected \"%v\" but \"%v\" was returned", test.title, test.signinURLRedirectParam, u.SigninURLRedirectParam)
 		}
 		if u.Method != test.method {
 			t.Errorf("%v: expected \"%v\" but \"%v\" was returned", test.title, test.method, u.Method)
@@ -173,7 +178,6 @@ func TestHeaderAnnotations(t *testing.T) {
 			continue
 		}
 
-		t.Log(i)
 		u, ok := i.(*Config)
 		if !ok {
 			t.Errorf("%v: expected an External type", test.title)
@@ -221,7 +225,6 @@ func TestCacheDurationAnnotations(t *testing.T) {
 			continue
 		}
 
-		t.Log(i)
 		u, ok := i.(*Config)
 		if !ok {
 			t.Errorf("%v: expected an External type", test.title)
@@ -232,41 +235,6 @@ func TestCacheDurationAnnotations(t *testing.T) {
 			t.Errorf("%v: expected \"%v\" but \"%v\" was returned", test.title, test.duration, u.AuthCacheDuration)
 		}
 	}
-}
-
-func TestParseStringToURL(t *testing.T) {
-	validURL := "http://bar.foo.com/external-auth"
-	validParsedURL, _ := url.Parse(validURL)
-
-	tests := []struct {
-		title   string
-		url     string
-		message string
-		parsed  *url.URL
-		expErr  bool
-	}{
-		{"empty", "", "url scheme is empty.", nil, true},
-		{"no scheme", "bar", "url scheme is empty.", nil, true},
-		{"invalid host", "http://", "url host is empty.", nil, true},
-		{"invalid host (multiple dots)", "http://foo..bar.com", "invalid url host.", nil, true},
-		{"valid URL", validURL, "", validParsedURL, false},
-	}
-
-	for _, test := range tests {
-
-		i, err := ParseStringToURL(test.url)
-		if test.expErr {
-			if err != test.message {
-				t.Errorf("%v: expected error \"%v\" but \"%v\" was returned", test.title, test.message, err)
-			}
-			continue
-		}
-
-		if i.String() != test.parsed.String() {
-			t.Errorf("%v: expected \"%v\" but \"%v\" was returned", test.title, test.parsed, i)
-		}
-	}
-
 }
 
 func TestParseStringToCacheDurations(t *testing.T) {
@@ -298,5 +266,55 @@ func TestParseStringToCacheDurations(t *testing.T) {
 			t.Errorf("%v: expected \"%v\" but \"%v\" was returned", test.title, test.expectedDurations, dur)
 		}
 	}
+}
 
+func TestProxySetHeaders(t *testing.T) {
+	ing := buildIngress()
+
+	data := map[string]string{}
+	ing.SetAnnotations(data)
+
+	tests := []struct {
+		title   string
+		url     string
+		headers map[string]string
+		expErr  bool
+	}{
+		{"single header", "http://goog.url", map[string]string{"header": "h1"}, false},
+		{"no header map", "http://goog.url", nil, true},
+		{"header with spaces", "http://goog.url", map[string]string{"header": "bad value"}, false},
+		{"header with other bad symbols", "http://goog.url", map[string]string{"header": "bad+value"}, false},
+	}
+
+	for _, test := range tests {
+		data[parser.GetAnnotationWithPrefix("auth-url")] = test.url
+		data[parser.GetAnnotationWithPrefix("auth-proxy-set-headers")] = "proxy-headers-map"
+		data[parser.GetAnnotationWithPrefix("auth-method")] = "GET"
+
+		configMapResolver := &resolver.Mock{
+			ConfigMaps: map[string]*api.ConfigMap{},
+		}
+
+		if test.headers != nil {
+			configMapResolver.ConfigMaps["proxy-headers-map"] = &api.ConfigMap{Data: test.headers}
+		}
+
+		i, err := NewParser(configMapResolver).Parse(ing)
+		if test.expErr {
+			if err == nil {
+				t.Errorf("expected error but retuned nil")
+			}
+			continue
+		}
+
+		u, ok := i.(*Config)
+		if !ok {
+			t.Errorf("%v: expected an External type", test.title)
+			continue
+		}
+
+		if !reflect.DeepEqual(u.ProxySetHeaders, test.headers) {
+			t.Errorf("%v: expected \"%v\" but \"%v\" was returned", test.title, test.headers, u.ProxySetHeaders)
+		}
+	}
 }

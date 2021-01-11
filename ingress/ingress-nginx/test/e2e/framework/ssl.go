@@ -18,6 +18,7 @@ package framework
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -32,8 +33,8 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/onsi/gomega"
-
+	"github.com/onsi/ginkgo"
+	"github.com/stretchr/testify/assert"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -74,12 +75,12 @@ func CreateIngressTLSSecret(client kubernetes.Interface, hosts []string, secretN
 	}
 
 	var apierr error
-	curSecret, err := client.CoreV1().Secrets(namespace).Get(secretName, metav1.GetOptions{})
+	curSecret, err := client.CoreV1().Secrets(namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
 	if err == nil && curSecret != nil {
 		curSecret.Data = newSecret.Data
-		_, apierr = client.CoreV1().Secrets(namespace).Update(curSecret)
+		_, apierr = client.CoreV1().Secrets(namespace).Update(context.TODO(), curSecret, metav1.UpdateOptions{})
 	} else {
-		_, apierr = client.CoreV1().Secrets(namespace).Create(newSecret)
+		_, apierr = client.CoreV1().Secrets(namespace).Create(context.TODO(), newSecret, metav1.CreateOptions{})
 	}
 	if apierr != nil {
 		return nil, apierr
@@ -118,12 +119,12 @@ func CreateIngressMASecret(client kubernetes.Interface, host string, secretName,
 	}
 
 	var apierr error
-	curSecret, err := client.CoreV1().Secrets(namespace).Get(secretName, metav1.GetOptions{})
+	curSecret, err := client.CoreV1().Secrets(namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
 	if err == nil && curSecret != nil {
 		curSecret.Data = newSecret.Data
-		_, apierr = client.CoreV1().Secrets(namespace).Update(curSecret)
+		_, apierr = client.CoreV1().Secrets(namespace).Update(context.TODO(), curSecret, metav1.UpdateOptions{})
 	} else {
-		_, apierr = client.CoreV1().Secrets(namespace).Create(newSecret)
+		_, apierr = client.CoreV1().Secrets(namespace).Create(context.TODO(), newSecret, metav1.CreateOptions{})
 	}
 	if apierr != nil {
 		return nil, apierr
@@ -144,7 +145,7 @@ func CreateIngressMASecret(client kubernetes.Interface, host string, secretName,
 // WaitForTLS waits until the TLS handshake with a given server completes successfully.
 func WaitForTLS(url string, tlsConfig *tls.Config) {
 	err := wait.Poll(Poll, DefaultTimeout, matchTLSServerName(url, tlsConfig))
-	Expect(err).NotTo(HaveOccurred(), "timeout waiting for TLS configuration in URL %s", url)
+	assert.Nil(ginkgo.GinkgoT(), err, "waiting for TLS configuration in URL %s", url)
 }
 
 // generateRSACert generates a basic self signed certificate using a key length
@@ -354,7 +355,7 @@ func matchTLSServerName(url string, tlsConfig *tls.Config) wait.ConditionFunc {
 			Logf("Unexpected TLS error: %v", err)
 			return false, nil
 		}
-		conn.Close()
+		defer conn.Close()
 
 		return true, nil
 	}
