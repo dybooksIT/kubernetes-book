@@ -11,4 +11,4 @@ spec:
   storageClassName: manual
   persistentVolumeReclaimPolicy: Delete
   hostPath:
-    path: /tmp/k8s-pv
+    path: /tmp/k8s-pv  # macOS Big Sur는 /private/tmp/k8s-pv로 설정
