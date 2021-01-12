@@ -18,12 +18,12 @@ spec:
       - name: kubernetes-nfsapp-pod
         image: arisu1000/simple-container-app:latest
         volumeMounts:
-        - mountPath: /test-nfs
+        - mountPath: /test-nfs  # nfs 볼륨을 마운트할 디렉터리 설정
           name: nfs-vol
         ports:
         - containerPort: 8080
       volumes:
       - name: nfs-vol
         nfs:
-          server: 10.1.6.126    # 여기에 nfs-server pod의 ip를 넣습니다.
-          path: /
+          server: 10.1.0.15    # 여기에 nfs-server pod의 ip를 넣습니다.
+          path: "/"
