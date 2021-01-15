@@ -1,13 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  labels:
+    app.kubernetes.io/component: metrics-adapter
+    app.kubernetes.io/name: prometheus-adapter
+    app.kubernetes.io/part-of: kube-prometheus
+    app.kubernetes.io/version: 0.8.2
   name: prometheus-adapter
   namespace: monitoring
 spec:
   replicas: 1
   selector:
     matchLabels:
-      name: prometheus-adapter
+      app.kubernetes.io/component: metrics-adapter
+      app.kubernetes.io/name: prometheus-adapter
+      app.kubernetes.io/part-of: kube-prometheus
   strategy:
     rollingUpdate:
       maxSurge: 1
@@ -15,7 +22,10 @@ spec:
   template:
     metadata:
       labels:
-        name: prometheus-adapter
+        app.kubernetes.io/component: metrics-adapter
+        app.kubernetes.io/name: prometheus-adapter
+        app.kubernetes.io/part-of: kube-prometheus
+        app.kubernetes.io/version: 0.8.2
     spec:
       containers:
       - args:
@@ -23,9 +33,9 @@ spec:
         - --config=/etc/adapter/config.yaml
         - --logtostderr=true
         - --metrics-relist-interval=1m
-        - --prometheus-url=http://prometheus-k8s.monitoring.svc:9090/
+        - --prometheus-url=http://prometheus-k8s.monitoring.svc.cluster.local:9090/
         - --secure-port=6443
-        image: quay.io/coreos/k8s-prometheus-adapter-amd64:v0.4.1
+        image: directxman12/k8s-prometheus-adapter:v0.8.2
         name: prometheus-adapter
         ports:
         - containerPort: 6443

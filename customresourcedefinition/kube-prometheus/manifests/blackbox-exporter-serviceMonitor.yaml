@@ -3,29 +3,22 @@ kind: ServiceMonitor
 metadata:
   labels:
     app.kubernetes.io/component: exporter
-    app.kubernetes.io/name: node-exporter
+    app.kubernetes.io/name: blackbox-exporter
     app.kubernetes.io/part-of: kube-prometheus
-    app.kubernetes.io/version: 1.0.1
-  name: node-exporter
+    app.kubernetes.io/version: 0.18.0
+  name: blackbox-exporter
   namespace: monitoring
 spec:
   endpoints:
   - bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-    interval: 15s
+    interval: 30s
+    path: /metrics
     port: https
-    relabelings:
-    - action: replace
-      regex: (.*)
-      replacement: $1
-      sourceLabels:
-      - __meta_kubernetes_pod_node_name
-      targetLabel: instance
     scheme: https
     tlsConfig:
       insecureSkipVerify: true
-  jobLabel: app.kubernetes.io/name
   selector:
     matchLabels:
       app.kubernetes.io/component: exporter
-      app.kubernetes.io/name: node-exporter
+      app.kubernetes.io/name: blackbox-exporter
       app.kubernetes.io/part-of: kube-prometheus

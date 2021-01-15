@@ -3,18 +3,20 @@ kind: Service
 metadata:
   labels:
     app.kubernetes.io/component: exporter
-    app.kubernetes.io/name: node-exporter
+    app.kubernetes.io/name: blackbox-exporter
     app.kubernetes.io/part-of: kube-prometheus
-    app.kubernetes.io/version: 1.0.1
-  name: node-exporter
+    app.kubernetes.io/version: 0.18.0
+  name: blackbox-exporter
   namespace: monitoring
 spec:
-  clusterIP: None
   ports:
   - name: https
-    port: 9100
+    port: 9115
     targetPort: https
+  - name: probe
+    port: 19115
+    targetPort: http
   selector:
     app.kubernetes.io/component: exporter
-    app.kubernetes.io/name: node-exporter
+    app.kubernetes.io/name: blackbox-exporter
     app.kubernetes.io/part-of: kube-prometheus

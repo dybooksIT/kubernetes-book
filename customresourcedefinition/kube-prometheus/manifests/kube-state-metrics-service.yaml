@@ -2,7 +2,10 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    k8s-app: kube-state-metrics
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/part-of: kube-prometheus
+    app.kubernetes.io/version: 1.9.7
   name: kube-state-metrics
   namespace: monitoring
 spec:
@@ -15,4 +18,6 @@ spec:
     port: 9443
     targetPort: https-self
   selector:
-    app: kube-state-metrics
+    app.kubernetes.io/component: exporter
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/part-of: kube-prometheus
