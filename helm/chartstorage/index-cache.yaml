@@ -3,7 +3,7 @@ entries:
   mysql:
   - apiVersion: v1
     appVersion: 5.7.30
-    created: "2021-01-15T17:50:39.840378265+09:00"
+    created: "2021-01-16T13:28:44+09:00"
     deprecated: true
     description: DEPRECATED - Fast, reliable, scalable, and easy to use open-source
       relational database system.
@@ -21,5 +21,26 @@ entries:
     urls:
     - charts/mysql-0.1.0.tgz
     version: 0.1.0
-generated: "2021-01-15T17:50:55+09:00"
+  mysql-addct:
+  - apiVersion: v1
+    appVersion: 5.7.30
+    created: "2021-01-22T15:02:39+09:00"
+    deprecated: true
+    description: DEPRECATED - Fast, reliable, scalable, and easy to use open-source
+      relational database system.
+    digest: 98e2a3bfc0193c3f5e4c1f9e0b053e118eb724e2bad1162f663bb31a55de12a4
+    home: https://www.mysql.com/
+    icon: https://www.mysql.com/common/logos/logo-mysql-170x115.png
+    keywords:
+    - mysql
+    - database
+    - sql
+    name: mysql-addct
+    sources:
+    - https://github.com/kubernetes/charts
+    - https://github.com/docker-library/mysql
+    urls:
+    - charts/mysql-addct-0.1.1.tgz
+    version: 0.1.1
+generated: "2021-01-22T15:02:51+09:00"
 serverInfo: {}
