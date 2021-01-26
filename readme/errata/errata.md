@@ -5,7 +5,7 @@
 
 13.1.1 kubectl의 config 파일에 있는 **TLS** 인증 정보 구조 확인하기
 
-## 97쪽 3.2.1 명령
+### 97쪽 3.2.1 명령
 `kubectl run nginx-app --image nginx --port=80`
 
 →
@@ -13,6 +13,14 @@
 `kubectl  create  deployment nginx-app --image nginx`
 
 단, 쿠버네티스 1.18 이후 사용자만 해당 정오표를 반영하기 바랍니다.
+
+### 177쪽 마지막 줄 명령 실행 결과
+
+AME → NAME
+
+### 180Whr 6.5.3 두 번째 문단
+
+`.spec.containers[].env[]` → `.spec.template.spec.containers[].env[]`
 
 ### 201쪽 그림 7-2 CludterIP 타입 서비스의 구조
 
