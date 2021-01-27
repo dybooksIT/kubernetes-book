@@ -4,6 +4,11 @@
 
 <img src="./readme/cover.jpg" width="400" height="544">
 
+## 중쇄 관련 버전 이슈 대응
+2021년 1월 기준으로 중쇄를 진행하면서 쿠버네티스 버전 1.14 기반에서 버전 1.19 기반으로 기준 환경이 변경되었습니다. 2쇄에는 이러한 사항이 반영되어 있지만 1쇄를 보시는 분들 중에 기준 버전이 바뀌고 그에 따라 명령 체계나 템플릿이 일부 바뀌어 불편한 분도 있을 듯 합니다.
+
+그래서 1쇄 독자분들 중 최근에 이 책을 보시는 분이라면 [쿠버네티스 입문 1쇄 독자를 위한 변경 사항 정리](https://github.com/dybooksIT/kubernetes-book/blob/master/readme/reprint/reprint_change.md.yaml)를 참고해서 실습 등을 진행하시기 바랍니다.
+
 ## 97쪽 3.2.1 명령어 수정 관련 안내
 97쪽 3.2.1의 `kubectl run nginx-app --image nginx --port=80`이라는 명령어는 쿠버네티스 1.18 이후에는 `kubectl  create  deployment nginx-app --image nginx` 명령으로 수정해 실행해야 함을 알려드립니다. 정오표에도 등록해두었습니다.
 

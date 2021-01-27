@@ -1,3 +1,5 @@
+# 1쇄 오탈자 정리
+
 ### 26쪽 목차
 13.1.1 kubectl의 config 파일에 있는 **TSL** 인증 정보 구조 확인하기
 
@@ -73,3 +75,27 @@ kubectl의 config 파일에 있는 **TLS** 인증 정보 구조 확인하기
 변경 후
 
 ![그림 15-4-af](./15-004-af.png)
+
+##  382쪽 점스타일 설명 중 수정
+proxy → forward
+
+### 487쪽 세 번째 문단 수정
+21.5에서 수정했던 msql 차트를 → 21.5에서 수정했던 __mysql__ 차트를
+
+# 2쇄 오탈자 정리
+
+## 312쪽 맨 아래 점 스타일 2개 문장
+
+* user.client-certificate-data: 클라이언트 인증에 필요한 해시값을 설정합니다. 여기에서는 TLS 인증 기반의 해시값을 설정했습니다.
+* user.client-key-data: 클라이언트의 키 해시값을 설정합니다. 여기에서는 TLS 인증 기반의 해시값을 설정했습니다.
+
+→
+
+* __name__.client-certificate-data: 클라이언트 인증에 필요한 해시값을 설정합니다. 여기에서는 TLS 인증 기반의 해시값을 설정했습니다.
+* __name__.client-key-data: 클라이언트의 키 해시값을 설정합니다. 여기에서는 TLS 인증 기반의 해시값을 설정했습니다.
+
+## 394쪽 다섯 번째 문단 첫 번째 줄
+이제 `kubectl get podts -n kube-system` 명령을 → 이제 `kubectl get pods -n kube-system` 명령을
+
+## 487쪽 두 번째 문단
+`curl --data-binary "@mysql-0.1.0.tgz" http://localhost:8080/api/charts` 명령을 → `curl --data-binary "@mysql-0.1.1.tgz" http://localhost:8080/api/charts` 명령을
