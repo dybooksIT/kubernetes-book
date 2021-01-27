@@ -6,10 +6,10 @@
 
 * 데몬세트(daemonset): extensions/v1beta1 & apps/v1beta → apps/v1
 * 디플로이먼트(deployment): extensions/v1beta1, apps/v1beta1, apps/v1beta2 → apps/v1 
-* 스테이트풀세트(statefulset): apps/v1beta1, apps/v1beta2 -> apps/v1
-* 레플리카세트(replicaset): extensions/v1beta1, apps/v1beta1, apps/v1beta2 -> apps/v1
+* 스테이트풀세트(statefulset): apps/v1beta1, apps/v1beta2 → apps/v1
+* 레플리카세트(replicaset): extensions/v1beta1, apps/v1beta1, apps/v1beta2 → apps/v1
 * 인그레스(ingress): extensions/v1beta1 -> networking.k8s.io/v1beta1
-* 사용자 정의 자원(CustomResourceDefinition): apiextensions.k8s.io/v1beta1 -> apiextensions.k8s.io/v1
+* 사용자 정의 자원(CustomResourceDefinition): apiextensions.k8s.io/v1beta1 → apiextensions.k8s.io/v1
 
 ## 2.2 도커 데스크톱을 이용한 쿠버네티스 설치
 윈도우 10과 macOS에 공통으로 적용되는 사항입니다.
