@@ -16,6 +16,9 @@
 
 단, 쿠버네티스 1.18 이후 사용자만 해당 정오표를 반영하기 바랍니다.
 
+### 102쪽 그림 3-4 다음 행
+서비스 타입에는 ClusterIP, NodePort, LoadBalancer, ExteralName이 → 서비스 타입에는 ClusterIP, NodePort, LoadBalancer, __ExternalName__이
+
 ### 177쪽 마지막 줄 명령 실행 결과
 
 AME → NAME
@@ -33,6 +36,9 @@ AME → NAME
 서비스Pod(ClusterIP: 10.104.123.139) / 파드(10.1.0.103) / 파드(10.1.0.104)
 
 ![그림 7-2](./07-002.png)
+
+### 210쪽 두 번째 문단 마지막 줄
+DNS 시스템은 ExteralName 타입의 → DNS 시스템은 __ExternalName__ 타입의
 
 ### 259쪽 10.2 제목 아래 문단
 
