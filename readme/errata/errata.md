@@ -17,13 +17,13 @@
 단, 쿠버네티스 1.18 이후 사용자만 해당 정오표를 반영하기 바랍니다.
 
 ### 102쪽 그림 3-4 다음 행
-서비스 타입에는 ClusterIP, NodePort, LoadBalancer, ExteralName이 → 서비스 타입에는 ClusterIP, NodePort, LoadBalancer, __ExternalName__이
+서비스 타입에는 ClusterIP, NodePort, LoadBalancer, ExteralName이 → 서비스 타입에는 ClusterIP, NodePort, LoadBalancer, **ExternalName**이
 
 ### 177쪽 마지막 줄 명령 실행 결과
 
 AME → NAME
 
-### 180Whr 6.5.3 두 번째 문단
+### 180쪽 6.5.3 두 번째 문단
 
 `.spec.containers[].env[]` → `.spec.template.spec.containers[].env[]`
 
@@ -38,7 +38,7 @@ AME → NAME
 ![그림 7-2](./07-002.png)
 
 ### 210쪽 두 번째 문단 마지막 줄
-DNS 시스템은 ExteralName 타입의 → DNS 시스템은 __ExternalName__ 타입의
+DNS 시스템은 ExteralName 타입의 → DNS 시스템은 **ExternalName** 타입의
 
 ### 259쪽 10.2 제목 아래 문단
 
@@ -86,7 +86,7 @@ kubectl의 config 파일에 있는 **TLS** 인증 정보 구조 확인하기
 proxy → forward
 
 ### 487쪽 세 번째 문단 수정
-21.5에서 수정했던 msql 차트를 → 21.5에서 수정했던 __mysql__ 차트를
+21.5에서 수정했던 msql 차트를 → 21.5에서 수정했던 **mysql** 차트를
 
 # 2쇄 오탈자 정리
 
@@ -97,8 +97,8 @@ proxy → forward
 
 →
 
-* __name__.client-certificate-data: 클라이언트 인증에 필요한 해시값을 설정합니다. 여기에서는 TLS 인증 기반의 해시값을 설정했습니다.
-* __name__.client-key-data: 클라이언트의 키 해시값을 설정합니다. 여기에서는 TLS 인증 기반의 해시값을 설정했습니다.
+* **name**.client-certificate-data: 클라이언트 인증에 필요한 해시값을 설정합니다. 여기에서는 TLS 인증 기반의 해시값을 설정했습니다.
+* **name**.client-key-data: 클라이언트의 키 해시값을 설정합니다. 여기에서는 TLS 인증 기반의 해시값을 설정했습니다.
 
 ## 394쪽 다섯 번째 문단 첫 번째 줄
 이제 `kubectl get podts -n kube-system` 명령을 → 이제 `kubectl get pods -n kube-system` 명령을
