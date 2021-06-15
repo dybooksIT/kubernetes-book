@@ -1,17 +1,15 @@
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
 metadata:
   labels:
     app.kubernetes.io/component: alert-router
     app.kubernetes.io/name: alertmanager
     app.kubernetes.io/part-of: kube-prometheus
     app.kubernetes.io/version: 0.22.2
-  name: alertmanager
+  name: alertmanager-main
   namespace: monitoring
 spec:
-  endpoints:
-  - interval: 30s
-    port: web
+  maxUnavailable: 1
   selector:
     matchLabels:
       alertmanager: main

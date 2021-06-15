@@ -16,9 +16,9 @@ spec:
     spec:
       containers:
       - name: prometheus-app
-        image: prom/prometheus:v2.24.1
+        image: prom/prometheus:v2.27.1
         args:
-        - "--config.file=/etc/prometheus/prometheus-kubernetes-config-old.yaml"
+        - "--config.file=/etc/prometheus/prometheus-kubernetes-config.yaml"
         ports:
         - containerPort: 9090
         volumeMounts:

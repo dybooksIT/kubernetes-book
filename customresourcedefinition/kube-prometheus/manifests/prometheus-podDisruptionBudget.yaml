@@ -1,5 +1,5 @@
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
 metadata:
   labels:
     app.kubernetes.io/component: prometheus
@@ -9,9 +9,7 @@ metadata:
   name: prometheus-k8s
   namespace: monitoring
 spec:
-  endpoints:
-  - interval: 30s
-    port: web
+  minAvailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/component: prometheus

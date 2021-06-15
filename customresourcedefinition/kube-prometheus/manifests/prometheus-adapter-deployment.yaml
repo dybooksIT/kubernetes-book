@@ -5,11 +5,11 @@ metadata:
     app.kubernetes.io/component: metrics-adapter
     app.kubernetes.io/name: prometheus-adapter
     app.kubernetes.io/part-of: kube-prometheus
-    app.kubernetes.io/version: 0.8.2
+    app.kubernetes.io/version: 0.8.4
   name: prometheus-adapter
   namespace: monitoring
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/component: metrics-adapter
@@ -18,14 +18,14 @@ spec:
   strategy:
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 0
+      maxUnavailable: 1
   template:
     metadata:
       labels:
         app.kubernetes.io/component: metrics-adapter
         app.kubernetes.io/name: prometheus-adapter
         app.kubernetes.io/part-of: kube-prometheus
-        app.kubernetes.io/version: 0.8.2
+        app.kubernetes.io/version: 0.8.4
     spec:
       containers:
       - args:
@@ -35,7 +35,7 @@ spec:
         - --metrics-relist-interval=1m
         - --prometheus-url=http://prometheus-k8s.monitoring.svc.cluster.local:9090/
         - --secure-port=6443
-        image: directxman12/k8s-prometheus-adapter:v0.8.2
+        image: directxman12/k8s-prometheus-adapter:v0.8.4
         name: prometheus-adapter
         ports:
         - containerPort: 6443

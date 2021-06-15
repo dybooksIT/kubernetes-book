@@ -1,5 +1,5 @@
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
 metadata:
   labels:
     app.kubernetes.io/component: metrics-adapter
@@ -9,13 +9,7 @@ metadata:
   name: prometheus-adapter
   namespace: monitoring
 spec:
-  endpoints:
-  - bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-    interval: 30s
-    port: https
-    scheme: https
-    tlsConfig:
-      insecureSkipVerify: true
+  minAvailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/component: metrics-adapter

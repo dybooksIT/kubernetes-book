@@ -9,4 +9,5 @@ spec:
     ports:
     - containerPort: 8080
   nodeSelector:
-    disktype: ssd
+    disktype: hdd
+    # disktype: ssd
