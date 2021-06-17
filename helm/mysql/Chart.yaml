@@ -9,10 +9,10 @@ keywords:
 - mysql
 - database
 - sql
-name: mysql
-# name: mysql-addct
+# name: mysql
+name: mysql-addct
 sources:
 - https://github.com/kubernetes/charts
 - https://github.com/docker-library/mysql
-version: 0.1.0
-# version: 0.1.1
+# version: 0.1.0
+version: 0.1.1
