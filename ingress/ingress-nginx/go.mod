@@ -5,11 +5,12 @@ go 1.15
 require (
 	github.com/armon/go-proxyproto v0.0.0-20200108142055-f0b8253b1507
 	github.com/eapache/channels v1.1.0
+	github.com/eapache/queue v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/fullsailor/pkcs7 v0.0.0-20190404230743-d7302db945fa // indirect
 	github.com/gavv/httpexpect/v2 v2.1.0
 	github.com/imdario/mergo v0.3.10
-	github.com/json-iterator/go v1.1.10
+	github.com/json-iterator/go v1.1.11
 	github.com/kylelemons/godebug v1.1.0
 	github.com/mitchellh/copystructure v1.0.0
 	github.com/mitchellh/go-ps v1.0.0
@@ -20,9 +21,9 @@ require (
 	github.com/onsi/ginkgo v1.14.1
 	github.com/opencontainers/runc v1.0.0-rc91.0.20200707015106-819fcc687efb
 	github.com/pkg/errors v0.9.1
-	github.com/prometheus/client_golang v1.7.1
+	github.com/prometheus/client_golang v1.11.1
 	github.com/prometheus/client_model v0.2.0
-	github.com/prometheus/common v0.14.0
+	github.com/prometheus/common v0.26.0
 	github.com/spf13/cobra v1.1.1
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.6.1
